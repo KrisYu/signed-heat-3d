@@ -68,6 +68,7 @@ In addition to the mesh file, you can pass several arguments to the command line
 |`--f`, `--fast`| Solve using a less accurate, but faster, method of integration. |
 |`--V`, `--verbose`| Verbose output. Off by default.|
 |`--h`| Controls the tet/grid spacing proportional to $2^{-h}$, with larger values indicating more refinement. Default value is 0.|
+|`--l`, `--headless`| Don't use the GUI, and automatically solve for & export the generalized SDF.|
 |`--help`| Display help. |
 
 To improve performance, operators and spatial discretizations are only built as necessary, and re-used in future computations if the underlying discretization hasn't changed. This means future computations can be significantly faster than the initial solve (which includes, for example, tet mesh construction and matrix factorization.)

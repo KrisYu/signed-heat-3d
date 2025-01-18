@@ -110,6 +110,8 @@ Vector<double> SignedHeatGridSolver::computeDistance(VertexPositionGeometry& geo
     double shift = evaluateAverageAlongSourceGeometry(geometry, phi);
     phi -= shift * Vector<double>::Ones(totalNodes);
     if (VERBOSE) std::cerr << "\tCompleted." << std::endl;
+
+    if (options.exportData) exportData(phi, options);
     return phi;
 }
 
@@ -218,6 +220,7 @@ Vector<double> SignedHeatGridSolver::computeDistance(pointcloud::PointPositionNo
     if (VERBOSE) std::cerr << "\tCompleted." << std::endl;
     pointGeom.unrequireTuftedTriangulation();
     pointGeom.tuftedGeom->unrequireVertexDualAreas();
+    if (options.exportData) exportData(phi, options);
     return phi;
 }
 
@@ -511,4 +514,34 @@ Vector3 SignedHeatGridSolver::indicesToNodePosition(const size_t& i, const size_
     Vector3 pos = {i * cellSize, j * cellSize, k * cellSize};
     pos += bboxMin;
     return pos;
+}
+
+/*
+ * Write CSV file, where each row is a node of the grid.
+ * The grid positions are defined in the computeDistance() functions.
+ * Columns: xCoord, yCoord, zCoord, SDF
+ * The first three columns record the (x,y,z) position of the node of the grid.
+ * "SDF" records the SDF value at the node.
+ */
+void SignedHeatGridSolver::exportData(const Vector<double>& phi, const SignedHeat3DOptions& options) const {
+
+    std::string filename = "../export/" + options.meshname + ".obj";
+    std::fstream f;
+    f.open(filename, std::ios::out | std::ios::trunc);
+    if (f.is_open()) {
+        f << "xCoord,yCoord,zCoord,SDF" << "\n";
+        for (size_t i = 0; i < nx; i++) {
+            for (size_t j = 0; j < ny; j++) {
+                for (size_t k = 0; k < nz; k++) {
+                    Vector3 x = indicesToNodePosition(i, j, k);
+                    size_t idx = indicesToNodeIndex(i, j, k);
+                    f << x[0] << "," << x[1] << "," << x[2] << "," << phi[idx] << "\n";
+                }
+            }
+        }
+        f.close();
+        if (VERBOSE) std::cerr << "File " << filename << " written succesfully." << std::endl;
+    } else {
+        if (VERBOSE) std::cerr << "Could not export '" << filename << "'!" << std::endl;
+    }
 }

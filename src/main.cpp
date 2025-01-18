@@ -63,6 +63,7 @@ std::string OUTPUT_DIR = "../export";
 std::string OUTPUT_FILENAME;
 int LAST_SOLVER_MODE;
 bool VERBOSE = true;
+bool HEADLESS;
 bool CONTOURED = false;
 
 void solve() {
@@ -79,12 +80,14 @@ void solve() {
         t2 = high_resolution_clock::now();
         ms_fp = t2 - t1;
         if (VERBOSE) std::cerr << "Solve time (s): " << ms_fp.count() / 1000. << std::endl;
-        polyscope::getVolumeMesh("domain")
-            ->addVertexScalarQuantity("GSD", PHI)
-            ->setColorMap(cmapName)
-            ->setIsolinesEnabled(true)
-            ->setEnabled(true);
-        polyscope::getVolumeMesh("domain")->setCullWholeElements(true);
+        if (!HEADLESS) {
+            polyscope::getVolumeMesh("domain")
+                ->addVertexScalarQuantity("GSD", PHI)
+                ->setColorMap(cmapName)
+                ->setIsolinesEnabled(true)
+                ->setEnabled(true);
+            polyscope::getVolumeMesh("domain")->setCullWholeElements(true);
+        }
     } else if (MESH_MODE == MeshMode::Grid) {
         t1 = high_resolution_clock::now();
         PHI = (INPUT_MODE == InputMode::Mesh) ? gridSolver->computeDistance(*geometry, SHM_OPTIONS)
@@ -92,22 +95,26 @@ void solve() {
         t2 = high_resolution_clock::now();
         ms_fp = t2 - t1;
         if (VERBOSE) std::cerr << "Solve time (s): " << ms_fp.count() / 1000. << std::endl;
-        gridScalarQ = polyscope::getVolumeGrid("domain")
-                          ->addNodeScalarQuantity("GSD", PHI)
-                          ->setColorMap(cmapName)
-                          ->setIsolinesEnabled(true);
-        gridScalarQ->setEnabled(true);
+        if (!HEADLESS) {
+            gridScalarQ = polyscope::getVolumeGrid("domain")
+                              ->addNodeScalarQuantity("GSD", PHI)
+                              ->setColorMap(cmapName)
+                              ->setIsolinesEnabled(true);
+            gridScalarQ->setEnabled(true);
+        }
     }
     if (VERBOSE) std::cerr << "min: " << PHI.minCoeff() << "\tmax: " << PHI.maxCoeff() << std::endl;
-    polyscope::removeLastSceneSlicePlane();
-    psPlane = polyscope::addSceneSlicePlane();
-    psPlane->setDrawPlane(false);
-    psPlane->setDrawWidget(true);
-    if (MESH_MODE == MeshMode::Tet) psPlane->setVolumeMeshToInspect("domain");
-    if (INPUT_MODE == InputMode::Mesh) {
-        psMesh->setIgnoreSlicePlane(psPlane->name, true);
-    } else {
-        psCloud->setIgnoreSlicePlane(psPlane->name, true);
+    if (!HEADLESS) {
+        polyscope::removeLastSceneSlicePlane();
+        psPlane = polyscope::addSceneSlicePlane();
+        psPlane->setDrawPlane(false);
+        psPlane->setDrawWidget(true);
+        if (MESH_MODE == MeshMode::Tet) psPlane->setVolumeMeshToInspect("domain");
+        if (INPUT_MODE == InputMode::Mesh) {
+            psMesh->setIgnoreSlicePlane(psPlane->name, true);
+        } else {
+            psCloud->setIgnoreSlicePlane(psPlane->name, true);
+        }
     }
     LAST_SOLVER_MODE = MESH_MODE;
     SHM_OPTIONS.rebuild = false;
@@ -230,12 +237,15 @@ int main(int argc, char** argv) {
     args::ArgumentParser parser("Solve for generalized signed distance (3D domains).");
     args::HelpFlag help(parser, "help", "Display this help menu", {"help"});
     args::Positional<std::string> meshFilename(parser, "mesh", "A mesh or point cloud file.");
+    args::ValueFlag<double> hCoef(parser, "h", "Controls the tet/grid spacing proportional to $2^{-h}$.",
+                                  {"h", "hCoef"});
 
     args::Group group(parser);
     args::Flag grid(group, "grid", "Solve on a background grid (vs. tet mesh).", {"g", "grid"});
     args::Flag fast(group, "fast", "Solve using a less accurate, but significantly faster, method of integration.",
                     {"f", "fast"});
     args::Flag verbose(group, "verbose", "Verbose output", {"V", "verbose"});
+    args::Flag headless(group, "headless", "Don't use the GUI.", {"l", "headless"});
 
     // Parse args
     try {
@@ -253,29 +263,32 @@ int main(int argc, char** argv) {
         std::cerr << "Please specify a mesh file as argument." << std::endl;
         return EXIT_FAILURE;
     }
+    if (hCoef) {
+        HCOEF = args::get(hCoef);
+    }
 
     // Load mesh
     std::string meshFilepath = args::get(meshFilename);
     MESH_MODE = grid ? MeshMode::Grid : MeshMode::Tet;
     OUTPUT_FILENAME = OUTPUT_DIR + "/GSD.obj";
     SHM_OPTIONS.fastIntegration = fast;
+    HEADLESS = headless;
+    SHM_OPTIONS.exportData = headless; // always true if in headless mode
+    SHM_OPTIONS.meshname = polyscope::guessNiceNameFromPath(meshFilepath);
     VERBOSE = verbose;
 
     // Get file extension.
-    polyscope::init();
-    polyscope::state::userCallback = callback;
     std::string ext = meshFilepath.substr(meshFilepath.find_last_of(".") + 1);
+    pointcloud::PointData<Vector3> pointPositions;
     if (ext != "pc") {
         std::tie(mesh, geometry) = readSurfaceMesh(meshFilepath);
-        psMesh = polyscope::registerSurfaceMesh(MESHNAME, geometry->vertexPositions, mesh->getFaceVertexList());
-        if (mesh->isTriangular()) psMesh->setAllPermutations(polyscopePermutations(*mesh));
         INPUT_MODE = InputMode::Mesh;
     } else {
         std::vector<Vector3> positions, normals;
         std::tie(positions, normals) = readPointCloud(meshFilepath);
         size_t nPts = positions.size();
         cloud = std::unique_ptr<pointcloud::PointCloud>(new pointcloud::PointCloud(nPts));
-        pointcloud::PointData<Vector3> pointPositions = pointcloud::PointData<Vector3>(*cloud);
+        pointPositions = pointcloud::PointData<Vector3>(*cloud);
         pointcloud::PointData<Vector3> pointNormals = pointcloud::PointData<Vector3>(*cloud);
         for (size_t i = 0; i < nPts; i++) {
             pointPositions[i] = positions[i];
@@ -283,7 +296,6 @@ int main(int argc, char** argv) {
         }
         pointGeom = std::unique_ptr<pointcloud::PointPositionNormalGeometry>(
             new pointcloud::PointPositionNormalGeometry(*cloud, pointPositions, pointNormals));
-        psCloud = polyscope::registerPointCloud("point cloud", pointPositions);
         INPUT_MODE = InputMode::Points;
     }
     tetSolver = std::unique_ptr<SignedHeatTetSolver>(new SignedHeatTetSolver());
@@ -291,7 +303,19 @@ int main(int argc, char** argv) {
     tetSolver->VERBOSE = verbose;
     gridSolver->VERBOSE = verbose;
 
-    polyscope::show();
+    if (!HEADLESS) {
+        polyscope::init();
+        polyscope::state::userCallback = callback;
+        if (ext != "pc") {
+            psMesh = polyscope::registerSurfaceMesh(MESHNAME, geometry->vertexPositions, mesh->getFaceVertexList());
+            if (mesh->isTriangular()) psMesh->setAllPermutations(polyscopePermutations(*mesh));
+        } else {
+            psCloud = polyscope::registerPointCloud("point cloud", pointPositions);
+        }
+        polyscope::show();
+    } else {
+        solve();
+    }
 
     return EXIT_SUCCESS;
 }
