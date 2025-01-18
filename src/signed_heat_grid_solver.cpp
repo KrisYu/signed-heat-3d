@@ -525,7 +525,7 @@ Vector3 SignedHeatGridSolver::indicesToNodePosition(const size_t& i, const size_
  */
 void SignedHeatGridSolver::exportData(const Vector<double>& phi, const SignedHeat3DOptions& options) const {
 
-    std::string filename = "../export/" + options.meshname + ".obj";
+    std::string filename = "../export/" + options.meshname + ".csv";
     std::fstream f;
     f.open(filename, std::ios::out | std::ios::trunc);
     if (f.is_open()) {
