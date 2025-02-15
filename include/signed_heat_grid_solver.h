@@ -29,7 +29,6 @@ class SignedHeatGridSolver {
     double shortTime, cellSize;
 
     SparseMatrix<double> laplaceMat;
-    std::unique_ptr<PositiveDefiniteSolver<double>> poissonSolver;
     FaceData<double> faceAreas;    // of the source geometry
     FaceData<Vector3> faceNormals; // of the source geometry
 

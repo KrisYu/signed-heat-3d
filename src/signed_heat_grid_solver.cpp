@@ -5,7 +5,7 @@ SignedHeatGridSolver::SignedHeatGridSolver() {}
 Vector<double> SignedHeatGridSolver::computeDistance(VertexPositionGeometry& geometry,
                                                      const SignedHeat3DOptions& options) {
 
-    if (options.rebuild || poissonSolver == nullptr) {
+    if (options.rebuild) {
         if (VERBOSE) std::cerr << "Building grid..." << std::endl;
         std::chrono::time_point<high_resolution_clock> t1, t2;
         std::chrono::duration<double, std::milli> ms_fp;
@@ -26,9 +26,6 @@ Vector<double> SignedHeatGridSolver::computeDistance(VertexPositionGeometry& geo
         cellSize = 2. * s / (nx - 1);
         if (VERBOSE) std::cerr << "Building Laplacian..." << std::endl;
         laplaceMat = laplacian();
-        if (VERBOSE) std::cerr << "Factorizing Laplacian..." << std::endl;
-        poissonSolver.reset(new PositiveDefiniteSolver<double>(laplaceMat));
-        if (VERBOSE) std::cerr << "Matrices factorized." << std::endl;
         t2 = high_resolution_clock::now();
         ms_fp = t2 - t1;
         if (VERBOSE) std::cerr << "Pre-compute time (s): " << ms_fp.count() / 1000. << std::endl;
@@ -118,7 +115,7 @@ Vector<double> SignedHeatGridSolver::computeDistance(VertexPositionGeometry& geo
 Vector<double> SignedHeatGridSolver::computeDistance(pointcloud::PointPositionNormalGeometry& pointGeom,
                                                      const SignedHeat3DOptions& options) {
 
-    if (options.rebuild || poissonSolver == nullptr) {
+    if (options.rebuild) {
         if (VERBOSE) std::cerr << "Building grid..." << std::endl;
         std::chrono::time_point<high_resolution_clock> t1, t2;
         std::chrono::duration<double, std::milli> ms_fp;
