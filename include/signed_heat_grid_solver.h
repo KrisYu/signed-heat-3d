@@ -44,4 +44,5 @@ class SignedHeatGridSolver {
     Vector3 barycenter(VertexPositionGeometry& geometry, const Face& f) const;
     size_t indicesToNodeIndex(const size_t& i, const size_t& j, const size_t& k) const;
     Vector3 indicesToNodePosition(const size_t& i, const size_t& j, const size_t& k) const;
+    void exportData(const Vector<double>& phi, const SignedHeat3DOptions& options) const;
 };

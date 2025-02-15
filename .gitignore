@@ -1,4 +1,5 @@
 # Build directories
+export/
 build/
 **/build/
 **/*.ppm

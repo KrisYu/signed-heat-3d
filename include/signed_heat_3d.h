@@ -25,6 +25,8 @@ struct SignedHeat3DOptions {
     double scale = 2.;
     bool useCrouzeixRaviart = true;
     bool fastIntegration = false;
+    bool exportData = false;
+    std::string meshname;
 };
 
 Vector3 centroid(VertexPositionGeometry& geometry);
