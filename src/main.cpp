@@ -145,7 +145,6 @@ void callback() {
     ImGui::Separator();
     ImGui::Text("Solve options");
     ImGui::Separator();
-    ImGui::Checkbox("Use fast integration", &SHM_OPTIONS.fastIntegration);
     if (MESH_MODE == MeshMode::Tet && mesh != nullptr && mesh->isTriangular()) {
         ImGui::Checkbox("Use Crouzeix-Raviart", &SHM_OPTIONS.useCrouzeixRaviart);
     }
@@ -271,7 +270,6 @@ int main(int argc, char** argv) {
     std::string meshFilepath = args::get(meshFilename);
     MESH_MODE = grid ? MeshMode::Grid : MeshMode::Tet;
     OUTPUT_FILENAME = OUTPUT_DIR + "/GSD.obj";
-    SHM_OPTIONS.fastIntegration = fast;
     HEADLESS = headless;
     SHM_OPTIONS.exportData = headless; // always true if in headless mode
     SHM_OPTIONS.meshname = polyscope::guessNiceNameFromPath(meshFilepath);
