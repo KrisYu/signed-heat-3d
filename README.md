@@ -74,6 +74,8 @@ To improve performance, operators and spatial discretizations are only built as 
 
 # Performance
 
+** Consider the `multigrid` branch of this repo for multigrid acceleration, which provides 5-10x speedup. **
+
 There is no acceleration is applied in this program, even though there are several obvious areas of performance improvement:
 
 * In 3D domains, Step 1 of the Signed Heat Method (vector diffusion) can be done by convolution; the integral is evaluted simply by direct summation, even though this summation is trivially parallelizable. 
