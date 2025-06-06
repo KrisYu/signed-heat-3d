@@ -61,7 +61,7 @@ int INPUT_MODE = InputMode::Mesh;
 std::string MESHNAME = "input mesh";
 std::string OUTPUT_DIR = "../export";
 std::string OUTPUT_FILENAME;
-int LAST_SOLVER_MODE;
+int LAST_SOLVER_MODE = MESH_MODE;
 bool VERBOSE = true;
 bool HEADLESS;
 bool CONTOURED = false;
@@ -71,6 +71,7 @@ void solve() {
     SHM_OPTIONS.levelSetConstraint = static_cast<LevelSetConstraint>(CONSTRAINT_MODE);
     SHM_OPTIONS.tCoef = TCOEF;
     SHM_OPTIONS.hCoef = HCOEF;
+    if (MESH_MODE != LAST_SOLVER_MODE) SHM_OPTIONS.rebuild = true;
     std::string cmapName = "viridis";
     if (MESH_MODE == MeshMode::Tet) {
         if (VERBOSE) std::cerr << "\nSolving on tet mesh..." << std::endl;
@@ -81,12 +82,16 @@ void solve() {
         ms_fp = t2 - t1;
         if (VERBOSE) std::cerr << "Solve time (s): " << ms_fp.count() / 1000. << std::endl;
         if (!HEADLESS) {
-            polyscope::getVolumeMesh("domain")
+            if (SHM_OPTIONS.rebuild) {
+                polyscope::VolumeMesh* psVolumeMesh =
+                    polyscope::registerTetMesh("tet domain", tetSolver->getVertices(), tetSolver->getTets());
+            }
+            polyscope::getVolumeMesh("tet domain")
                 ->addVertexScalarQuantity("GSD", PHI)
                 ->setColorMap(cmapName)
                 ->setIsolinesEnabled(true)
                 ->setEnabled(true);
-            polyscope::getVolumeMesh("domain")->setCullWholeElements(true);
+            polyscope::getVolumeMesh("tet domain")->setCullWholeElements(true);
         }
     } else if (MESH_MODE == MeshMode::Grid) {
         t1 = high_resolution_clock::now();
@@ -96,7 +101,20 @@ void solve() {
         ms_fp = t2 - t1;
         if (VERBOSE) std::cerr << "Solve time (s): " << ms_fp.count() / 1000. << std::endl;
         if (!HEADLESS) {
-            gridScalarQ = polyscope::getVolumeGrid("domain")
+            if (SHM_OPTIONS.rebuild) {
+                glm::vec3 boundMin, boundMax, gridSizes;
+                Eigen::Vector3d bboxMin, bboxMax;
+                std::tie(bboxMin, bboxMax) = gridSolver->getBBox();
+                std::vector<size_t> sizes = gridSolver->getGridResolution();
+                for (int i = 0; i < 3; i++) {
+                    boundMin[i] = bboxMin(i);
+                    boundMax[i] = bboxMax(i);
+                    gridSizes[i] = sizes[i];
+                }
+                polyscope::VolumeGrid* psGrid =
+                    polyscope::registerVolumeGrid("grid domain", gridSizes, boundMin, boundMax);
+            }
+            gridScalarQ = polyscope::getVolumeGrid("grid domain")
                               ->addNodeScalarQuantity("GSD", PHI)
                               ->setColorMap(cmapName)
                               ->setIsolinesEnabled(true);
@@ -109,7 +127,7 @@ void solve() {
         psPlane = polyscope::addSceneSlicePlane();
         psPlane->setDrawPlane(false);
         psPlane->setDrawWidget(true);
-        if (MESH_MODE == MeshMode::Tet) psPlane->setVolumeMeshToInspect("domain");
+        if (MESH_MODE == MeshMode::Tet) psPlane->setVolumeMeshToInspect("tet domain");
         if (INPUT_MODE == InputMode::Mesh) {
             psMesh->setIgnoreSlicePlane(psPlane->name, true);
         } else {
@@ -241,8 +259,6 @@ int main(int argc, char** argv) {
 
     args::Group group(parser);
     args::Flag grid(group, "grid", "Solve on a background grid (vs. tet mesh).", {"g", "grid"});
-    args::Flag fast(group, "fast", "Solve using a less accurate, but significantly faster, method of integration.",
-                    {"f", "fast"});
     args::Flag verbose(group, "verbose", "Verbose output", {"V", "verbose"});
     args::Flag headless(group, "headless", "Don't use the GUI.", {"l", "headless"});
 

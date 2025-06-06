@@ -1,6 +1,3 @@
-[submodule "deps/polyscope"]
-	path = deps/polyscope
-	url = https://github.com/nmwsharp/polyscope.git
 [submodule "deps/tetgen"]
 	path = deps/tetgen
 	url = https://github.com/libigl/tetgen.git
@@ -10,3 +7,9 @@
 [submodule "deps/geometry-central"]
 	path = deps/geometry-central
 	url = https://github.com/nmwsharp/geometry-central.git
+[submodule "deps/amgcl"]
+	path = deps/amgcl
+	url = https://github.com/nzfeng/amgcl.git
+[submodule "deps/polyscope"]
+	path = deps/polyscope
+	url = https://github.com/nmwsharp/polyscope.git

@@ -3,8 +3,6 @@
 #include "geometrycentral/numerical/linear_solvers.h"
 #include "geometrycentral/surface/surface_mesh_factories.h"
 
-#include "polyscope/volume_mesh.h"
-
 #include "signed_heat_3d.h"
 #include <igl/marching_tets.h>
 
@@ -32,11 +30,15 @@ class SignedHeatTetSolver {
 
     bool VERBOSE = true;
 
+    // Expose parameters for visualizing the tet mesh
+    Eigen::MatrixXd getVertices() const;
+    Eigen::MatrixXi getTets() const;
+
   private:
     // == mesh encoding input surface
     std::vector<int> surfaceFaces; // indexes into faces of tetmesh; sign indicates relative orientation
 
-    // == tetmesh quantities
+    // == more tetmesh quantities
     Eigen::MatrixXd vertices; // vertex positions
     Eigen::MatrixXi tets;     // tetrahedra -- each row is vertex indices
     Eigen::MatrixXi faces;    // faces -- each row is vertex indices

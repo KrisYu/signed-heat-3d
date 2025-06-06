@@ -1,7 +1,6 @@
 #pragma once
 
 #include "geometrycentral/numerical/linear_solvers.h"
-#include "polyscope/volume_grid.h"
 
 #include "signed_heat_3d.h"
 
@@ -21,19 +20,22 @@ class SignedHeatGridSolver {
 
     bool VERBOSE = true;
 
+    // Expose parameters for visualizing the grid
+    std::vector<size_t> getGridResolution() const;
+    std::tuple<Eigen::Vector3d, Eigen::Vector3d> getBBox() const;
+
   private:
+    double shortTime, cellSize;
     size_t nx = 0;
     size_t ny, nz; // number of vertices on x/y/z side of grid
     Vector3 bboxMin, bboxMax;
 
-    double shortTime, cellSize;
-
-    SparseMatrix<double> laplaceMat;
+    Eigen::SparseMatrix<double, Eigen::RowMajor> laplaceMat;
     FaceData<double> faceAreas;    // of the source geometry
     FaceData<Vector3> faceNormals; // of the source geometry
 
-    SparseMatrix<double> laplacian() const;
-    SparseMatrix<double> gradient() const;
+    Eigen::SparseMatrix<double, Eigen::RowMajor> laplacian() const;
+    Eigen::SparseMatrix<double, Eigen::RowMajor> gradient() const;
     Vector<double> integrateGreedily(const Eigen::VectorXd& Yt);
     double evaluateFunction(const Vector<double>& u, const Vector3& q) const;
     void trilinearCoefficients(const Vector3& q, std::vector<size_t>& nodeIndices, std::vector<double>& coeffs) const;
