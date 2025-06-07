@@ -1,18 +1,57 @@
-name: build 
+name: Build
 
-on: [push, pull_request]
+on:
+  pull_request:
+  push:
+    tags:
+    - '*'
+    branches:
+    - main
+
+# disable concurrent runs
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
-    runs-on: macos-latest 
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-14, macos-13]
+
+    if: "! contains(toJSON(github.event.commits.*.message), '[ci skip]')"
     steps:
     - uses: actions/checkout@v4
       with:
-        submodules: recursive 
+        submodules: recursive
+
+    # - name: Install Boost
+    #   if: runner.os == 'macOS'
+    #   shell: bash
+    #   run: |
+    #     brew upgrade
+    #     brew install boost
+    # - if: runner.os == 'Linux'
+    #   run: |
+    #     sudo apt-get -y update
+    #     sudo apt-get -y install libboost-dev
+    # - if: runner.os == 'Windows'
+    #   run: |
+    #     git clone --depth=1 --recurse-submodules -j10 https://github.com/boostorg/boost.git
+    #     cd boost
+    #     bootstrap.bat
+
+    - name: ubuntu packages
+      if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install -y xorg-dev libglu1-mesa-dev xpra xserver-xorg-video-dummy freeglut3-dev
 
     - name: configure
-      run: mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Debug ..
+      run: mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Debug .. -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DSHM_NO_AMGCL=On
 
     - name: build
+      if: runner.os != 'Windows'
       run: cd build && make
 
+    - if: runner.os == 'Windows'
+      run: cd build && cmake --build "." -DSHM_NO_AMGCL=On
