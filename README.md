@@ -73,13 +73,13 @@ The algorithm is robust to self-intersections, holes, and noise in the input geo
 In addition to the mesh file, you can pass several arguments to the command line, including flags which are also shown as options in the GUI.
 
 |flag | usage | purpose|
-| ------------- |-------------|
+| ------------- |-------------|-------------|
 |`--g`, `--grid`| `--g`, `--grid` | Solve on a background grid. By default, the domain will be discretized as a tet mesh. |
 |`--V`, `--verbose`| `--V`, `--verbose`| Verbose output. Off by default.|
 |`--h`| `--h=64`, `--h=64,64,128` `--h 64, 32, 128`| 3D vector specifying the tet/grid spacing, with larger values indicating more refinement. If solving on a grid, this corresponds to the number of nodes along each dimension. Default values are $2^{5}$.|
 |`--b`| `--b=0., 0., 0., 1., 1., 1.`, `--b 0., 0., 0., 1., 1., 1.`| Specify the 3D positions of the minimum and maximum corners of the computational domain (in that order), which is assumed to be an axis-aligned rectangular prism. If not specified, the size of the domain will be automatically computed so as to encompass the input source geometry.|
-|`--l`, `--headless`| Don't use the GUI, and automatically solve for & export the generalized SDF.|
-|`--help`| Display help. |
+|`--l`, `--headless`| `--l`, `--headless`| Don't use the GUI, and automatically solve for & export the generalized SDF.|
+|`--help`| `--help`| Display help. |
 
 To improve performance, operators and spatial discretizations are only built as necessary, and re-used in future computations if the underlying discretization hasn't changed. This means future computations can be significantly faster than the initial solve (which includes, for example, tet mesh construction and matrix factorization.)
 
