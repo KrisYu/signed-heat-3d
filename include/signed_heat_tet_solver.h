@@ -11,6 +11,10 @@
 #define TETLIBRARY
 #include "tetgen.h"
 
+// dual normal per edge
+#include "edge_dual_normal_geometry.h"
+
+
 using namespace geometrycentral;
 using namespace geometrycentral::surface;
 
@@ -25,6 +29,9 @@ class SignedHeatTetSolver {
     Vector<double> computeDistance(pointcloud::PointPositionNormalGeometry& pointGeom,
                                    const SignedHeat3DOptions& options = SignedHeat3DOptions());
 
+    Vector<double> computeDistance(EdgeDualNormalGeometry& edgeGeom,
+                                   const SignedHeat3DOptions& options);
+    
     void isosurface(std::unique_ptr<SurfaceMesh>& isoMesh, std::unique_ptr<VertexPositionGeometry>& isoGeom,
                     const Vector<double>& phi, double isoval = 0.) const;
 
@@ -104,4 +111,9 @@ class SignedHeatTetSolver {
     std::vector<Vector3> buildCubeAroundSurface(const Vector3& bboxMin, const Vector3 bboxMax) const;
     void getTetmeshData(tetgenio& out);
     double computeMeanNodeSpacing() const;
+    
+    //
+    double calculateAverageEdgeLength(const EdgeDualNormalGeometry& edgeGeom);
+    void tetmeshEdgeGeo(EdgeDualNormalGeometry& edgeGeom,
+                        const SignedHeat3DOptions& options);
 };

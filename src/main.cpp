@@ -169,6 +169,7 @@ void contour() {
     if (LAST_SOLVER_MODE == MeshMode::Tet) {
         tetSolver->isosurface(isoMesh, isoGeom, PHI, ISOVAL);
         polyscope::registerSurfaceMesh("isosurface", isoGeom->vertexPositions, isoMesh->getFaceVertexList());
+        
     } else {
         gridScalarQ->setIsosurfaceLevel(ISOVAL);
         gridScalarQ->setIsosurfaceVizEnabled(true);
@@ -177,6 +178,9 @@ void contour() {
     }
     CONTOURED = true;
     polyscope::getSurfaceMesh("isosurface")->setIgnoreSlicePlane(psPlane->name, true);
+    polyscope::getSurfaceMesh("isosurface")->setEdgeWidth(1.0);  // 设置边的宽度
+    polyscope::getSurfaceMesh("isosurface")->setEdgeColor({0.0, 0.0, 0.0});  // 设置边的颜色（黑色）
+    
 }
 
 void callback() {
@@ -195,16 +199,20 @@ void callback() {
     }
     ImGui::InputFloat("tCoef (diffusion time)", &TCOEF);
 
-    // Resolution
-    if (ImGui::InputInt("Resolution (x-axis)", &RESOLUTION[0])) {
-        SHM_OPTIONS.rebuild = true;
+    // 应该只有 grid 改变 Resolution 才有影响吧
+    if (MESH_MODE == MeshMode::Grid) {
+        // Resolution
+        if (ImGui::InputInt("Resolution (x-axis)", &RESOLUTION[0])) {
+            SHM_OPTIONS.rebuild = true;
+        }
+        if (ImGui::InputInt("Resolution (y-axis)", &RESOLUTION[1])) {
+            SHM_OPTIONS.rebuild = true;
+        }
+        if (ImGui::InputInt("Resolution (z-axis)", &RESOLUTION[2])) {
+            SHM_OPTIONS.rebuild = true;
+        }
     }
-    if (ImGui::InputInt("Resolution (y-axis)", &RESOLUTION[1])) {
-        SHM_OPTIONS.rebuild = true;
-    }
-    if (ImGui::InputInt("Resolution (z-axis)", &RESOLUTION[2])) {
-        SHM_OPTIONS.rebuild = true;
-    }
+    
 
     if (MESH_MODE != MeshMode::Grid) {
         ImGui::RadioButton("Constrain zero set", &CONSTRAINT_MODE, static_cast<int>(LevelSetConstraint::ZeroSet));
@@ -434,7 +442,8 @@ int main(int argc, char** argv) {
                     vertices.push_back({v.x, v.y, v.z});
                 }
                 psCloud = polyscope::registerPointCloud("edge vertices", vertices);
-                
+                psCloud->setPointRadius(0.002, true);  // true 表示相对半径
+
                 // Register edges as a curve network
                 std::vector<glm::vec3> edgeVertices;
                 std::vector<std::array<size_t, 2>> edgeIndices;
@@ -493,6 +502,7 @@ int main(int argc, char** argv) {
         } else {
             psCloud = polyscope::registerPointCloud("point cloud", pointPositions);
         }
+        polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::None;
         polyscope::show();
     } else {
         solve();
