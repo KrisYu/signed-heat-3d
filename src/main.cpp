@@ -5,6 +5,7 @@
 #include "geometrycentral/surface/vertex_position_geometry.h"
 
 #include "polyscope/point_cloud.h"
+#include "polyscope/curve_network.h"
 #include "polyscope/polyscope.h"
 #include "polyscope/surface_mesh.h"
 #include "polyscope/volume_grid.h"
@@ -39,6 +40,11 @@ std::unique_ptr<VertexPositionGeometry> geometry;
 std::unique_ptr<pointcloud::PointCloud> cloud;
 std::unique_ptr<pointcloud::PointPositionNormalGeometry> pointGeom;
 
+
+// Edge Normal
+std::unique_ptr<geometrycentral::EdgeDualNormalGeometry> edgeGeometry;
+
+
 // Contouring
 float ISOVAL = 0.;
 Vector<double> PHI;
@@ -51,6 +57,10 @@ polyscope::PointCloud* psCloud;
 polyscope::VolumeGridNodeScalarQuantity* gridScalarQ;
 polyscope::SlicePlane* psPlane;
 
+// For edge
+polyscope::CurveNetwork* psCurves;
+polyscope::PointCloud* psEdgeMidpoints;
+
 // Solvers & parameters
 float TCOEF = 1.0;
 std::array<int, 3> RESOLUTION = {16, 16, 16};
@@ -61,7 +71,7 @@ int CONSTRAINT_MODE = static_cast<int>(LevelSetConstraint::ZeroSet);
 
 // Program variables
 enum MeshMode { Tet = 0, Grid };
-enum InputMode { Mesh = 0, Points };
+enum InputMode { Mesh = 0, Points, EdgeNormals };
 int MESH_MODE = MeshMode::Tet;
 int INPUT_MODE = InputMode::Mesh;
 std::string MESHNAME = "input mesh";
@@ -82,8 +92,19 @@ void solve() {
     if (MESH_MODE == MeshMode::Tet) {
         if (VERBOSE) std::cerr << "\nSolving on tet mesh..." << std::endl;
         t1 = high_resolution_clock::now();
-        PHI = (INPUT_MODE == InputMode::Mesh) ? tetSolver->computeDistance(*geometry, SHM_OPTIONS)
-                                              : tetSolver->computeDistance(*pointGeom, SHM_OPTIONS);
+        
+//        PHI = (INPUT_MODE == InputMode::Mesh) ? tetSolver->computeDistance(*geometry, SHM_OPTIONS)
+//                                              : tetSolver->computeDistance(*pointGeom, SHM_OPTIONS);
+        
+        if (INPUT_MODE == InputMode::Mesh) {
+            PHI = tetSolver->computeDistance(*geometry, SHM_OPTIONS);
+        } else if (INPUT_MODE == InputMode::EdgeNormals) {
+            std::cout << "Using Tet edge dual normal version of computeDistance" << std::endl;
+            PHI = tetSolver->computeDistance(*edgeGeometry, SHM_OPTIONS);
+        } else {
+            PHI = tetSolver->computeDistance(*pointGeom, SHM_OPTIONS);
+        }
+        
         t2 = high_resolution_clock::now();
         ms_fp = t2 - t1;
         if (VERBOSE) std::cerr << "Solve time (s): " << ms_fp.count() / 1000. << std::endl;
@@ -330,23 +351,47 @@ int main(int argc, char** argv) {
     // Get file extension.
     std::string ext = meshFilepath.substr(meshFilepath.find_last_of(".") + 1);
     pointcloud::PointData<Vector3> pointPositions;
-    if (ext != "pc") {
+    if (ext != "pc" and ext != "normal") {
         std::tie(mesh, geometry) = readSurfaceMesh(meshFilepath);
         INPUT_MODE = InputMode::Mesh;
-    } else {
-        std::vector<Vector3> positions, normals;
-        std::tie(positions, normals) = readPointCloud(meshFilepath);
-        size_t nPts = positions.size();
-        cloud = std::unique_ptr<pointcloud::PointCloud>(new pointcloud::PointCloud(nPts));
-        pointPositions = pointcloud::PointData<Vector3>(*cloud);
-        pointcloud::PointData<Vector3> pointNormals = pointcloud::PointData<Vector3>(*cloud);
-        for (size_t i = 0; i < nPts; i++) {
-            pointPositions[i] = positions[i];
-            pointNormals[i] = normals[i];
+    } else if (ext == "normal"){
+        
+        // Handle .normal files with edge dual normals
+        std::cout << "Processing .normal file format (edge dual normals)" << std::endl;
+        
+        edgeGeometry = std::unique_ptr<geometrycentral::EdgeDualNormalGeometry>(
+                                                                                new geometrycentral::EdgeDualNormalGeometry());
+        
+        if (readEdgeDualNormal(meshFilepath, *edgeGeometry)) {
+            INPUT_MODE = InputMode::EdgeNormals;
+            std::cout << "Loaded edge dual normal geometry" << std::endl;
+            
+            // Resample the geometry to a target edge length
+            float targetEdgeLength = 0.05f; // Set your desired edge length here
+            
+            EdgeDualNormalGeometry resampledGeometry;
+            if (resampleEdgeDualNormalGeometry(*edgeGeometry, resampledGeometry, targetEdgeLength)) {
+                // Replace the original geometry with the resampled one
+                *edgeGeometry = resampledGeometry;
+                std::cout << "Geometry resampled to target edge length: " << targetEdgeLength << std::endl;
+            } else {
+                std::cout << "Warning: Resampling failed, using original geometry" << std::endl;
+            }
+        } else {
+            std::vector<Vector3> positions, normals;
+            std::tie(positions, normals) = readPointCloud(meshFilepath);
+            size_t nPts = positions.size();
+            cloud = std::unique_ptr<pointcloud::PointCloud>(new pointcloud::PointCloud(nPts));
+            pointPositions = pointcloud::PointData<Vector3>(*cloud);
+            pointcloud::PointData<Vector3> pointNormals = pointcloud::PointData<Vector3>(*cloud);
+            for (size_t i = 0; i < nPts; i++) {
+                pointPositions[i] = positions[i];
+                pointNormals[i] = normals[i];
+            }
+            pointGeom = std::unique_ptr<pointcloud::PointPositionNormalGeometry>(
+                                                                                 new pointcloud::PointPositionNormalGeometry(*cloud, pointPositions, pointNormals));
+            INPUT_MODE = InputMode::Points;
         }
-        pointGeom = std::unique_ptr<pointcloud::PointPositionNormalGeometry>(
-            new pointcloud::PointPositionNormalGeometry(*cloud, pointPositions, pointNormals));
-        INPUT_MODE = InputMode::Points;
     }
     tetSolver = std::unique_ptr<SignedHeatTetSolver>(new SignedHeatTetSolver());
     gridSolver = std::unique_ptr<SignedHeatGridSolver>(new SignedHeatGridSolver());
@@ -377,9 +422,74 @@ int main(int argc, char** argv) {
     if (!HEADLESS) {
         polyscope::init();
         polyscope::state::userCallback = callback;
-        if (ext != "pc") {
+        if (ext != "pc" && ext != "normal") {
             psMesh = polyscope::registerSurfaceMesh(MESHNAME, geometry->vertexPositions, mesh->getFaceVertexList());
             if (mesh->isTriangular()) psMesh->setAllPermutations(polyscopePermutations(*mesh));
+        } else if (ext == "normal"){
+            // Handle edge dual normal visualization
+            if (edgeGeometry && edgeGeometry->isValid()) {
+                // Register vertices as a point cloud
+                std::vector<glm::vec3> vertices;
+                for (const auto& v : edgeGeometry->getVertices()) {
+                    vertices.push_back({v.x, v.y, v.z});
+                }
+                psCloud = polyscope::registerPointCloud("edge vertices", vertices);
+                
+                // Register edges as a curve network
+                std::vector<glm::vec3> edgeVertices;
+                std::vector<std::array<size_t, 2>> edgeIndices;
+                
+                const auto& edges = edgeGeometry->getEdges();
+                const auto& verts = edgeGeometry->getVertices();
+                
+                for (size_t i = 0; i < edges.size(); ++i) {
+                    size_t v0 = edges[i].first;
+                    size_t v1 = edges[i].second;
+                    
+                    edgeIndices.push_back({v0, v1});
+                }
+                
+                psCurves = polyscope::registerCurveNetwork("edges", vertices, edgeIndices);
+                
+                // Visualize dual normals at edge midpoints
+                std::vector<glm::vec3> edgeMidpoints;
+                std::vector<glm::vec3> normals1, normals2;
+                
+                const auto& n1 = edgeGeometry->getNormals1();
+                const auto& n2 = edgeGeometry->getNormals2();
+                
+                for (size_t i = 0; i < edges.size(); ++i) {
+                    // Calculate edge midpoint
+                    const auto& v0 = verts[edges[i].first];
+                    const auto& v1 = verts[edges[i].second];
+                    glm::vec3 midpoint = {
+                        (v0.x + v1.x) * 0.5f,
+                        (v0.y + v1.y) * 0.5f,
+                        (v0.z + v1.z) * 0.5f
+                    };
+                    edgeMidpoints.push_back(midpoint);
+                    
+                    // Add both normals
+                    normals1.push_back({n1[i].x, n1[i].y, n1[i].z});
+                    normals2.push_back({n2[i].x, n2[i].y, n2[i].z});
+                }
+                
+                // Register edge midpoints as a separate point cloud for normals
+                psEdgeMidpoints = polyscope::registerPointCloud("edge midpoints", edgeMidpoints);
+                psEdgeMidpoints->addVectorQuantity("normals1", normals1)
+                ->setVectorLengthScale(0.05)
+                ->setVectorColor({1.0, 0.0, 0.0})  // Red for first normals
+                ->setVectorRadius(0.0025)
+                ->setEnabled(true);
+                
+                psEdgeMidpoints->addVectorQuantity("normals2", normals2)
+                ->setVectorLengthScale(0.05)
+                ->setVectorColor({0.0, 0.0, 1.0})  // Blue for second normals
+                ->setVectorRadius(0.0025)
+                ->setEnabled(true);
+                
+                std::cout << "Visualizing " << edges.size() << " edges with dual normals" << std::endl;
+            }
         } else {
             psCloud = polyscope::registerPointCloud("point cloud", pointPositions);
         }
