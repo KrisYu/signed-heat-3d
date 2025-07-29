@@ -1,6 +1,7 @@
 # Build directories
 export/
 build/
+build-xcode/
 **/build/
 **/*.ppm
 

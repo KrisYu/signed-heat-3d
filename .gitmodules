@@ -13,3 +13,6 @@
 [submodule "deps/polyscope"]
 	path = deps/polyscope
 	url = https://github.com/nmwsharp/polyscope.git
+[submodule "deps/CDT"]
+	path = deps/CDT
+	url = https://github.com/KrisYu/CDT
