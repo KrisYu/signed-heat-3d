@@ -1675,7 +1675,9 @@ void SignedHeatTetSolver::tetmeshEdgeGeo(EdgeDualNormalGeometry& edgeGeom,
     std::string EDGE_TET_PREFIX = "pq2.0Yfennna"; // q2.0 很宽松，不会破坏边
 
     double meanEdgeLength = calculateAverageEdgeLength(edgeGeom);
-    double targetArea = meanEdgeLength * meanEdgeLength;
+//    double targetArea = meanEdgeLength * meanEdgeLength;
+    // 使用真正的体积约束，会变慢很多，但是貌似可以做到 edge on mesh
+    double targetArea = meanEdgeLength * meanEdgeLength * meanEdgeLength;
     std::string tetFlags = EDGE_TET_PREFIX + std::to_string(targetArea);
 
     try {

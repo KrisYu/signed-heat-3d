@@ -82,8 +82,11 @@ bool VERBOSE = true;
 bool HEADLESS;
 bool CONTOURED = false;
 
-void solve() {
+bool AUTO_EXPORT_ISOSURFACE = true;  // 自动保存
+void contour();
 
+void solve() {
+    
     SHM_OPTIONS.levelSetConstraint = static_cast<LevelSetConstraint>(CONSTRAINT_MODE);
     SHM_OPTIONS.tCoef = TCOEF;
     for (int i = 0; i < 3; i++) SHM_OPTIONS.resolution[i] = RESOLUTION[i]; // implicit cast
@@ -93,8 +96,8 @@ void solve() {
         if (VERBOSE) std::cerr << "\nSolving on tet mesh..." << std::endl;
         t1 = high_resolution_clock::now();
         
-//        PHI = (INPUT_MODE == InputMode::Mesh) ? tetSolver->computeDistance(*geometry, SHM_OPTIONS)
-//                                              : tetSolver->computeDistance(*pointGeom, SHM_OPTIONS);
+        //        PHI = (INPUT_MODE == InputMode::Mesh) ? tetSolver->computeDistance(*geometry, SHM_OPTIONS)
+        //                                              : tetSolver->computeDistance(*pointGeom, SHM_OPTIONS);
         
         if (INPUT_MODE == InputMode::Mesh) {
             PHI = tetSolver->computeDistance(*geometry, SHM_OPTIONS);
@@ -111,19 +114,19 @@ void solve() {
         if (!HEADLESS) {
             if (SHM_OPTIONS.rebuild) {
                 polyscope::VolumeMesh* psVolumeMesh =
-                    polyscope::registerTetMesh("tet domain", tetSolver->getVertices(), tetSolver->getTets());
+                polyscope::registerTetMesh("tet domain", tetSolver->getVertices(), tetSolver->getTets());
             }
             polyscope::getVolumeMesh("tet domain")
-                ->addVertexScalarQuantity("GSD", PHI)
-                ->setColorMap(cmapName)
-                ->setIsolinesEnabled(true)
-                ->setEnabled(true);
+            ->addVertexScalarQuantity("GSD", PHI)
+            ->setColorMap(cmapName)
+            ->setIsolinesEnabled(true)
+            ->setEnabled(true);
             polyscope::getVolumeMesh("tet domain")->setCullWholeElements(true);
         }
     } else if (MESH_MODE == MeshMode::Grid) {
         t1 = high_resolution_clock::now();
         PHI = (INPUT_MODE == InputMode::Mesh) ? gridSolver->computeDistance(*geometry, SHM_OPTIONS)
-                                              : gridSolver->computeDistance(*pointGeom, SHM_OPTIONS);
+        : gridSolver->computeDistance(*pointGeom, SHM_OPTIONS);
         t2 = high_resolution_clock::now();
         ms_fp = t2 - t1;
         if (VERBOSE) std::cerr << "Solve time (s): " << ms_fp.count() / 1000. << std::endl;
@@ -139,12 +142,12 @@ void solve() {
                     gridSizes[i] = sizes[i];
                 }
                 polyscope::VolumeGrid* psGrid =
-                    polyscope::registerVolumeGrid("grid domain", gridSizes, boundMin, boundMax);
+                polyscope::registerVolumeGrid("grid domain", gridSizes, boundMin, boundMax);
             }
             gridScalarQ = polyscope::getVolumeGrid("grid domain")
-                              ->addNodeScalarQuantity("GSD", PHI)
-                              ->setColorMap(cmapName)
-                              ->setIsolinesEnabled(true);
+            ->addNodeScalarQuantity("GSD", PHI)
+            ->setColorMap(cmapName)
+            ->setIsolinesEnabled(true);
             gridScalarQ->setEnabled(true);
         }
     }
@@ -157,12 +160,42 @@ void solve() {
         if (MESH_MODE == MeshMode::Tet) psPlane->setVolumeMeshToInspect("tet domain");
         if (INPUT_MODE == InputMode::Mesh) {
             psMesh->setIgnoreSlicePlane(psPlane->name, true);
+        } else if (INPUT_MODE == InputMode::EdgeNormals) {
+           // 让所有 edge normal 相关的可视化忽略 slice plane
+           psCloud->setIgnoreSlicePlane(psPlane->name, true);
+           if (psCurves)
+           {
+               psCurves->setIgnoreSlicePlane(psPlane->name, true);
+               psCurves->setRadius(0.001, true);  // true 表示相对半径
+           }
+//           if (psEdgeMidpoints) psEdgeMidpoints->setIgnoreSlicePlane(psPlane->name, true);
+            
         } else {
             psCloud->setIgnoreSlicePlane(psPlane->name, true);
         }
     }
     LAST_SOLVER_MODE = MESH_MODE;
     SHM_OPTIONS.rebuild = false;
+    
+  
+    if (AUTO_EXPORT_ISOSURFACE == true)
+    {
+        // 自动生成和导出 contour = 0 的 isosurface
+        if (PHI.size() > 0) {
+            ISOVAL = 0.0;  // 设置为 0
+            
+            // 直接使用 tetSolver 生成等值面，无需依赖 polyscope
+            tetSolver->isosurface(isoMesh, isoGeom, PHI, ISOVAL);
+            
+            // 检查是否成功生成网格
+            if (isoMesh && isoGeom) {
+                std::string isoFilename = OUTPUT_DIR + "/" + SHM_OPTIONS.meshname + "_isosurface.obj";
+                writeSurfaceMesh(*isoMesh, *isoGeom, isoFilename);
+                std::cerr << "Auto-exported isosurface (contour=0) to " << isoFilename << std::endl;
+            }
+        }
+    }
+    
 }
 
 void contour() {
