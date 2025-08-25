@@ -1466,13 +1466,13 @@ Vector<double> SignedHeatTetSolver::computeDistance(EdgeDualNormalGeometry& edge
         if (VERBOSE) std::cerr << "Initial mesh build time (s): " << ms_fp.count() / 1000. << std::endl;
     }
 
-    // 主计算循环（最多2次迭代：初始计算 + 可能的细分重计算）
-    bool needsRefinement = true;
-    int maxIterations = 2;  // 限制迭代次数
+    // 主计算循环
+    int maxIterations = 2;  // 你可以随意修改这个值
     int iteration = 0;
     Vector<double> phi;
+    bool meshWasRefined = false;  // 跟踪是否进行了网格细分
     
-    while (needsRefinement && iteration < maxIterations) {
+    while (iteration < maxIterations) {
         if (iteration > 0 && VERBOSE) {
             std::cerr << "Refinement iteration " << iteration << std::endl;
         }
@@ -1576,59 +1576,82 @@ Vector<double> SignedHeatTetSolver::computeDistance(EdgeDualNormalGeometry& edge
         
         if (VERBOSE) std::cerr << "\tCompleted." << std::endl;
 
-        // 关键部分：检查是否需要边细分（只在第一次迭代中检查）
-        if (iteration == 0) {
+        // 检查是否需要边细分（但要保证至少有一次完整的计算）
+        // 关键改进：只有在还有剩余迭代次数时才进行细分
+        bool shouldCheckRefinement = (iteration < maxIterations - 1) || (maxIterations == 1);
+        
+        if (shouldCheckRefinement) {
             std::vector<EdgeRefinementInfo> edgesToRefine;
-            double isovalue = 0.0;  // 等值线
+            double isovalue = 0.0;
 
             if (checkEdgesNeedRefinement(edgeGeom, phi, isovalue, edgesToRefine)) {
-                if (VERBOSE) {
-                    std::cout << "Found " << edgesToRefine.size() << " edges that need refinement" << std::endl;
-                    std::cout << "Rebuilding mesh with additional constraint points..." << std::endl;
+                // 只有在还有剩余迭代次数时才实际进行细分
+                if (iteration < maxIterations - 1) {
+                    if (VERBOSE) {
+                        std::cout << "Found " << edgesToRefine.size() << " edges that need refinement" << std::endl;
+                        std::cout << "Rebuilding mesh with additional constraint points..." << std::endl;
+                    }
+                    
+                    // 提取新的约束点
+                    std::vector<Vector3> extraPoints;
+                    for (const auto& info : edgesToRefine) {
+                        extraPoints.push_back(info.newVertexPosition);
+                    }
+                    
+                    // 重建包含新约束点的四面体网格
+                    std::chrono::time_point<high_resolution_clock> refine_start = high_resolution_clock::now();
+                    
+                    tetmeshEdgeGeo(edgeGeom, options, extraPoints);
+                    
+                    // 重新计算网格数据
+                    meanNodeSpacing = computeMeanNodeSpacing();
+                    shortTime = options.tCoef * meanNodeSpacing * meanNodeSpacing;
+                    tetVolumes = computeTetVolumes();
+                    laplaceMat = dualLaplacian();
+                    
+                    std::chrono::time_point<high_resolution_clock> refine_end = high_resolution_clock::now();
+                    auto refine_time = std::chrono::duration_cast<std::chrono::milliseconds>(refine_end - refine_start);
+                    
+                    if (VERBOSE) {
+                        std::cout << "Mesh refinement completed in " << refine_time.count() << " ms" << std::endl;
+                        std::cout << "New mesh has " << vertices.rows() << " vertices and " << nTets << " tetrahedra" << std::endl;
+                    }
+                    
+                    meshWasRefined = true;
+                    // 继续下一次迭代，重新计算距离函数
+                    iteration++;
+                    continue;
+                } else {
+                    // 没有足够的迭代次数进行细分，但已经有了有效的 phi
+                    if (VERBOSE) {
+                        std::cout << "Found " << edgesToRefine.size() << " edges that need refinement, "
+                                  << "but no remaining iterations. Using current result." << std::endl;
+                    }
                 }
-                
-                // 提取新的约束点
-                std::vector<Vector3> extraPoints;
-                for (const auto& info : edgesToRefine) {
-                    extraPoints.push_back(info.newVertexPosition);
-                }
-                
-                // 重建包含新约束点的四面体网格
-                std::chrono::time_point<high_resolution_clock> refine_start = high_resolution_clock::now();
-                
-                tetmeshEdgeGeo(edgeGeom, options, extraPoints);
-                
-                // 重新计算网格数据
-                meanNodeSpacing = computeMeanNodeSpacing();
-                shortTime = options.tCoef * meanNodeSpacing * meanNodeSpacing;
-                tetVolumes = computeTetVolumes();
-                laplaceMat = dualLaplacian();
-                
-                std::chrono::time_point<high_resolution_clock> refine_end = high_resolution_clock::now();
-                auto refine_time = std::chrono::duration_cast<std::chrono::milliseconds>(refine_end - refine_start);
-                
-                if (VERBOSE) {
-                    std::cout << "Mesh refinement completed in " << refine_time.count() << " ms" << std::endl;
-                    std::cout << "New mesh has " << vertices.rows() << " vertices and " << nTets << " tetrahedra" << std::endl;
-                }
-                
-                // 继续下一次迭代
-                iteration++;
-                continue;
             } else {
                 if (VERBOSE) std::cout << "No edges need refinement, mesh is adequate" << std::endl;
-                needsRefinement = false;
             }
-        } else {
-            // 第二次迭代，不再检查细分
-            needsRefinement = false;
         }
         
-        iteration++;
+        // 无论如何都要退出循环，因为我们已经有了有效的 phi
+        break;
+    }
+    
+    // 安全检查：确保 phi 不为空
+    if (phi.size() == 0) {
+        if (VERBOSE) std::cerr << "Warning: phi is empty, this should not happen!" << std::endl;
+        // 创建一个默认的 phi（全零或基于网格大小）
+        phi = Vector<double>::Zero(vertices.rows());
+        if (VERBOSE) std::cerr << "Created fallback phi with size: " << phi.size() << std::endl;
     }
     
     if (VERBOSE) {
-        std::cout << "Distance computation completed after " << iteration << " iteration(s)" << std::endl;
+        std::cout << "Distance computation completed";
+        if (meshWasRefined) {
+            std::cout << " with mesh refinement";
+        }
+        std::cout << std::endl;
+        std::cout << "Final phi size: " << phi.size() << ", expected vertices: " << vertices.rows() << std::endl;
     }
 
     return phi;
