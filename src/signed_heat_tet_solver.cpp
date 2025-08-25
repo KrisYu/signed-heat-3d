@@ -1,5 +1,7 @@
 #include "signed_heat_tet_solver.h"
 
+#include "polyscope/volume_mesh.h"
+
 SignedHeatTetSolver::SignedHeatTetSolver() {}
 
 Eigen::MatrixXd SignedHeatTetSolver::getVertices() const {
@@ -879,8 +881,44 @@ void SignedHeatTetSolver::isosurface(std::unique_ptr<SurfaceMesh>& isoMesh,
     Eigen::VectorXi J;
     Eigen::SparseMatrix<double> BC;
     igl::marching_tets(vertices, tets, phi, isoval, SV, SF, J, BC);
+//    clean_zero_edges_simple(SV, SF);
     std::tie(isoMesh, isoGeom) = makeSurfaceMeshAndGeometry(SV, SF);
+    
+    
 }
+
+void SignedHeatTetSolver::clean_zero_edges_simple(Eigen::MatrixXd& V, Eigen::MatrixXi& F) const {
+    double epsilon = 1e-8;
+    bool has_zero_edges = true;
+    
+    while (has_zero_edges) {
+        has_zero_edges = false;
+        
+        // 正确的变量声明
+        Eigen::MatrixXi uE;
+        Eigen::VectorXi EMAP;
+        Eigen::MatrixXi EF, EI;
+        
+        // 正确的 edge_flaps 调用
+        igl::edge_flaps(F, uE, EMAP, EF, EI);
+        
+        for (int i = 0; i < uE.rows(); i++) {
+            double len = (V.row(uE(i,0)) - V.row(uE(i,1))).norm();
+            
+            if (len < epsilon) {
+                Eigen::RowVectorXd pos = V.row(uE(i,0));
+                
+                // 尝试 collapse_edge
+                if (igl::collapse_edge(i, pos, V, F, uE, EMAP, EF, EI)) {
+                    has_zero_edges = true;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+
 
 // =============== TET UTILITIES
 
@@ -1432,7 +1470,8 @@ Vector<double> SignedHeatTetSolver::computeDistance(EdgeDualNormalGeometry& edge
         bboxMax = options.bboxMax;
         
 //        tetmeshPointCloud(*pointPolyGeom, bboxMin, bboxMax);
-        tetmeshEdgeGeo(edgeGeom,options);
+        std::vector<Vector3> emptyExtraPoints;
+        tetmeshEdgeGeo(edgeGeom,options, emptyExtraPoints);
         
         if (VERBOSE) std::cerr << "Computing tet mesh data..." << std::endl;
         meanNodeSpacing = computeMeanNodeSpacing();
@@ -1545,6 +1584,14 @@ Vector<double> SignedHeatTetSolver::computeDistance(EdgeDualNormalGeometry& edge
     
     if (VERBOSE) std::cerr << "\tCompleted." << std::endl;
 
+    std::vector<EdgeRefinementInfo> edgesToRefine;
+    double isovalue = 0.0;  // 你的等值线
+
+    if (checkEdgesNeedRefinement(phi, isovalue, edgesToRefine)) {
+        std::cout << "Found " << edgesToRefine.size() << " edges to refine" << std::endl;
+        // 然后进行边细分...
+    }
+    
     return phi;
 }
 
@@ -1575,7 +1622,8 @@ double SignedHeatTetSolver::calculateAverageEdgeLength(const EdgeDualNormalGeome
 
 
 void SignedHeatTetSolver::tetmeshEdgeGeo(EdgeDualNormalGeometry& edgeGeom,
-                                         const SignedHeat3DOptions& options) {
+                                         const SignedHeat3DOptions& options,
+                                         const std::vector<Vector3>& extraPoints) {
     
     // First Delaunay triangulate the surface of the bounding cube
     tetgenio cubeSurface;
@@ -1596,10 +1644,15 @@ void SignedHeatTetSolver::tetmeshEdgeGeo(EdgeDualNormalGeometry& edgeGeom,
     const auto& edges = edgeGeom.getEdges();
     size_t P = vertices_data.size();
     size_t E = edges.size();
+    size_t EP = extraPoints.size();  // Number of extra points
+    
+    if (VERBOSE && EP > 0) {
+        std::cerr << "Adding " << EP << " extra constraint points" << std::endl;
+    }
     
     // Define nodes
     in.firstnumber = 0;
-    in.numberofpoints = P + cubeSurface.numberofpoints;
+    in.numberofpoints = P + EP + cubeSurface.numberofpoints;  // Include extra points
     in.pointlist = new REAL[in.numberofpoints * 3];
     in.pointmarkerlist = new int[in.numberofpoints];
     
@@ -1612,11 +1665,20 @@ void SignedHeatTetSolver::tetmeshEdgeGeo(EdgeDualNormalGeometry& edgeGeom,
         }
     }
     
+    // Copy extra constraint points
+    for (size_t i = 0; i < EP; i++) {
+        Vector3 pos = extraPoints[i];
+        in.pointmarkerlist[P + i] = 2; // Mark as extra constraint points (different marker)
+        for (int j = 0; j < 3; j++) {
+            in.pointlist[3 * (P + i) + j] = pos[j];
+        }
+    }
+    
     // Copy nodes from the triangulation of the cube surface
     for (int i = 0; i < cubeSurface.numberofpoints; i++) {
-        in.pointmarkerlist[P + i] = 0; // Mark as boundary points
+        in.pointmarkerlist[P + EP + i] = 0; // Mark as boundary points
         for (int j = 0; j < 3; j++) {
-            in.pointlist[3 * P + 3 * i + j] = cubeSurface.pointlist[3 * i + j];
+            in.pointlist[3 * (P + EP) + 3 * i + j] = cubeSurface.pointlist[3 * i + j];
         }
     }
     
@@ -1639,8 +1701,8 @@ void SignedHeatTetSolver::tetmeshEdgeGeo(EdgeDualNormalGeometry& edgeGeom,
         p->numberofvertices = 3;
         p->vertexlist = new int[p->numberofvertices];
         for (int j = 0; j < 3; j++) {
-            p->vertexlist[j] = P + cubeSurface.trifacelist[3 * i + j];
-            in.trifacelist[3 * i + j] = P + cubeSurface.trifacelist[3 * i + j];
+            p->vertexlist[j] = P + EP + cubeSurface.trifacelist[3 * i + j];  // Adjust indices
+            in.trifacelist[3 * i + j] = P + EP + cubeSurface.trifacelist[3 * i + j];
         }
     }
     
@@ -1659,7 +1721,7 @@ void SignedHeatTetSolver::tetmeshEdgeGeo(EdgeDualNormalGeometry& edgeGeom,
     if (VERBOSE) {
         std::cerr << "Input summary:" << std::endl;
         std::cerr << "  Points: " << in.numberofpoints << " (" << P << " edge vertices + "
-                  << cubeSurface.numberofpoints << " boundary)" << std::endl;
+                  << EP << " extra points + " << cubeSurface.numberofpoints << " boundary)" << std::endl;
         std::cerr << "  Constraint edges: " << in.numberofedges << std::endl;
         std::cerr << "  Boundary facets: " << in.numberoffacets << std::endl;
     }
@@ -1669,16 +1731,11 @@ void SignedHeatTetSolver::tetmeshEdgeGeo(EdgeDualNormalGeometry& edgeGeom,
     // 'Y' = preserve input surface mesh
     // 'q' = quality mesh generation
     
-//    std::string tetFlags = "pYfennn";
-    
     // 宽松质量约束 + 体积控制
     std::string EDGE_TET_PREFIX = "pq2.0Yfennna"; // q2.0 很宽松，不会破坏边
 
     double meanEdgeLength = calculateAverageEdgeLength(edgeGeom);
     double targetArea = meanEdgeLength * meanEdgeLength;
-    // 使用真正的体积约束，会变慢很多，但是貌似可以做到 edge on mesh
-//    double targetArea = meanEdgeLength * meanEdgeLength * meanEdgeLength;
-//    double targetArea = meanEdgeLength * meanEdgeLength * meanEdgeLength / 4;
     std::string tetFlags = EDGE_TET_PREFIX + std::to_string(targetArea);
 
     try {
@@ -1696,3 +1753,195 @@ void SignedHeatTetSolver::tetmeshEdgeGeo(EdgeDualNormalGeometry& edgeGeom,
     // Get tet mesh info
     getTetmeshData(out);
 }
+
+
+
+
+// 简单启发式：检查四面体网格边是否需要在中点插入顶点
+bool SignedHeatTetSolver::checkEdgesNeedRefinement(
+    const Vector<double>& phi,
+    double isovalue,
+    std::vector<EdgeRefinementInfo>& edgesToRefine) {
+    
+    // 收集所有四面体边（避免重复）
+    std::set<std::pair<size_t, size_t>> uniqueEdges;
+    
+    // 遍历所有四面体，收集边
+    for (size_t tetIdx = 0; tetIdx < nTets; tetIdx++) {
+        // 每个四面体有6条边：(0,1), (0,2), (0,3), (1,2), (1,3), (2,3)
+        std::array<size_t, 4> tetVerts;
+        for (int i = 0; i < 4; i++) {
+            tetVerts[i] = tets(tetIdx, i);
+        }
+        
+        // 添加6条边（确保小索引在前，避免重复）
+        for (int i = 0; i < 4; i++) {
+            for (int j = i + 1; j < 4; j++) {
+                size_t v0 = tetVerts[i];
+                size_t v1 = tetVerts[j];
+                if (v0 > v1) std::swap(v0, v1);  // 确保v0 < v1
+                uniqueEdges.insert({v0, v1});
+            }
+        }
+    }
+    
+    std::cout << "Checking " << uniqueEdges.size() << " unique tetrahedral edges" << std::endl;
+    
+    
+    bool foundEdgesToRefine = false;
+    double threshold = 0.1 * meanNodeSpacing;  // 可调参数：接近等值线的阈值
+
+    // 检查每条四面体边
+    for (const auto& edge : uniqueEdges) {
+        size_t v0Idx = edge.first;
+        size_t v1Idx = edge.second;
+
+        double phi0 = phi[v0Idx];
+        double phi1 = phi[v1Idx];
+
+        // 如果端点在等值线异侧，传统方法已经能处理，跳过
+        if ((phi0 - isovalue) * (phi1 - isovalue) < 0) {
+            continue;
+        }
+
+        // 简单启发式：两端点都在同侧，但都接近等值线
+        double dist0 = std::abs(phi0 - isovalue);
+        double dist1 = std::abs(phi1 - isovalue);
+
+        if (dist0 <= threshold && dist1 <= threshold) {
+            // 两个端点都接近等值线，在中点插入顶点
+            EdgeRefinementInfo info;
+            info.v0Idx = v0Idx;
+            info.v1Idx = v1Idx;
+
+            // 计算中点位置
+            Vector3 v0{vertices(v0Idx, 0), vertices(v0Idx, 1), vertices(v0Idx, 2)};
+            Vector3 v1{vertices(v1Idx, 0), vertices(v1Idx, 1), vertices(v1Idx, 2)};
+            info.newVertexPosition = (v0 + v1) * 0.5;
+
+            edgesToRefine.push_back(info);
+            foundEdgesToRefine = true;
+        }
+    }
+
+    std::cout << "Found " << edgesToRefine.size() << " edges that need midpoint insertion" << std::endl;
+    return foundEdgesToRefine;
+}
+
+// 计算顶点梯度（基于四面体网格）
+std::vector<Vector3> SignedHeatTetSolver::computeVertexGradients(const Vector<double>& phi) {
+    size_t nVertices = vertices.rows();
+    std::vector<Vector3> gradients(nVertices, Vector3{0, 0, 0});
+    std::vector<double> weights(nVertices, 0.0);
+    
+    // 从相邻四面体的梯度加权平均
+    for (size_t tetIdx = 0; tetIdx < nTets; tetIdx++) {
+        Vector3 tetGrad = computeTetGradient(tetIdx, phi);
+        double tetVolume = tetVolumes[tetIdx];
+        
+        // 将梯度贡献给四面体的所有顶点
+        for (int i = 0; i < 4; i++) {
+            size_t vertIdx = tets(tetIdx, i);
+            if (vertIdx < nVertices) {
+                gradients[vertIdx] += tetGrad * tetVolume;
+                weights[vertIdx] += tetVolume;
+            }
+        }
+    }
+    
+    // 归一化
+    for (size_t i = 0; i < nVertices; i++) {
+        if (weights[i] > 1e-12) {
+            gradients[i] /= weights[i];
+        }
+    }
+    
+    return gradients;
+}
+
+// 计算四面体梯度
+Vector3 SignedHeatTetSolver::computeTetGradient(size_t tetIdx, const Vector<double>& phi) {
+    std::array<size_t, 4> tetVerts;
+    for (int i = 0; i < 4; i++) {
+        tetVerts[i] = tets(tetIdx, i);
+    }
+    
+    // 构建变换矩阵
+    Eigen::Matrix3d A;
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            A(i, j) = vertices(tetVerts[i+1], j) - vertices(tetVerts[0], j);
+        }
+    }
+    
+    double det = A.determinant();
+    if (std::abs(det) < 1e-12) {
+        return Vector3{0, 0, 0};
+    }
+    
+    Eigen::Matrix3d AInv = A.inverse();
+    
+    // 计算梯度
+    Vector3 grad{0, 0, 0};
+    for (int i = 1; i < 4; i++) {
+        double phi_diff = phi[tetVerts[i]] - phi[tetVerts[0]];
+        Vector3 gradNi{AInv(0, i-1), AInv(1, i-1), AInv(2, i-1)};
+        grad += gradNi * phi_diff;
+    }
+    
+    return grad;
+}
+
+// 三次多项式检查（保留给高级版本）
+bool SignedHeatTetSolver::checkSingleEdgeNeedsRefinement(
+    double phi0, double phi1,
+    double grad0_proj, double grad1_proj,
+    double edgeLength, double isovalue,
+    double& refinementParam) {
+    
+    double f0 = phi0 - isovalue;
+    double f1 = phi1 - isovalue;
+    double df0 = grad0_proj * edgeLength;
+    double df1 = grad1_proj * edgeLength;
+    
+    double d = f0;
+    double c = df0;
+    double a = 2 * (f0 - f1) + df0 + df1;
+    double b = 3 * (f1 - f0) - 2 * df0 - df1;
+    
+    if (std::abs(a) < 1e-12) {
+        if (std::abs(b) > 1e-12) {
+            double t_extremum = -c / (2 * b);
+            if (t_extremum > 0 && t_extremum < 1) {
+                double ft = b * t_extremum * t_extremum + c * t_extremum + d;
+                if ((f0 > 0 && f1 > 0 && ft < 0) || (f0 < 0 && f1 < 0 && ft > 0)) {
+                    refinementParam = t_extremum;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+    
+    double discriminant = 4 * b * b - 12 * a * c;
+    if (discriminant < 0) return false;
+    
+    double sqrt_disc = std::sqrt(discriminant);
+    double t1 = (-2 * b + sqrt_disc) / (6 * a);
+    double t2 = (-2 * b - sqrt_disc) / (6 * a);
+    
+    std::vector<double> candidates;
+    if (t1 >= 0 && t1 <= 1) candidates.push_back(t1);
+    if (t2 >= 0 && t2 <= 1) candidates.push_back(t2);
+    
+    for (double t : candidates) {
+        double ft = a * t * t * t + b * t * t + c * t + d;
+        if ((f0 > 0 && f1 > 0 && ft < 0) || (f0 < 0 && f1 < 0 && ft > 0)) {
+            refinementParam = t;
+            return true;
+        }
+    }
+    
+    return false;
+}
+

@@ -6,6 +6,9 @@
 #include "signed_heat_3d.h"
 #include <igl/marching_tets.h>
 
+#include <igl/collapse_edge.h>
+#include <igl/edge_flaps.h>
+
 #include <set>
 
 #define TETLIBRARY
@@ -19,55 +22,57 @@ using namespace geometrycentral;
 using namespace geometrycentral::surface;
 
 class SignedHeatTetSolver {
-
-  public:
+    
+public:
     SignedHeatTetSolver();
-
+    
     Vector<double> computeDistance(VertexPositionGeometry& geometry,
                                    const SignedHeat3DOptions& options = SignedHeat3DOptions());
-
+    
     Vector<double> computeDistance(pointcloud::PointPositionNormalGeometry& pointGeom,
                                    const SignedHeat3DOptions& options = SignedHeat3DOptions());
-
+    
     Vector<double> computeDistance(EdgeDualNormalGeometry& edgeGeom,
                                    const SignedHeat3DOptions& options);
     
     void isosurface(std::unique_ptr<SurfaceMesh>& isoMesh, std::unique_ptr<VertexPositionGeometry>& isoGeom,
                     const Vector<double>& phi, double isoval = 0.) const;
+    
 
+    
     bool VERBOSE = true;
-
+    
     // Expose parameters for visualizing the tet mesh
     Eigen::MatrixXd getVertices() const;
     Eigen::MatrixXi getTets() const;
-
-  private:
+    
+private:
     // == mesh encoding input surface
     std::vector<int> surfaceFaces; // indexes into faces of tetmesh; sign indicates relative orientation
-
+    
     // == more tetmesh quantities
     Eigen::MatrixXd vertices; // vertex positions
     Eigen::MatrixXi tets;     // tetrahedra -- each row is vertex indices
     Eigen::MatrixXi faces;    // faces -- each row is vertex indices
     size_t nVertices, nTets, nFaces, nEdges;
-
+    
     Eigen::VectorXd faceAreas, tetVolumes;
     Eigen::MatrixXi tetFace; // (nTets x 4) tet-face (signed) adjacency
     std::vector<std::set<size_t>> vertexTet;
-
+    
     double meanNodeSpacing;
     double shortTime;
-
+    
     FaceData<double> surfaceFaceAreas;    // of the source geometry
     FaceData<Vector3> surfaceFaceNormals; // of the source geometry
     std::unique_ptr<pointcloud::PointCloud> cloud;
     std::unique_ptr<pointcloud::PointPositionGeometry> pointPolyGeom; // for polygon mesh
-
+    
     // == solvers
     SparseMatrix<double> laplaceMat, laplaceCR, massMat, avgMat;
     std::unique_ptr<PositiveDefiniteSolver<double>> poissonSolver, poissonSolverCR;
     std::unique_ptr<SquareSolver<double>> projectionSolver;
-
+    
     // == algorithm
     Vector<double> integrateVectorField(VertexPositionGeometry& geometry, const Eigen::MatrixXd& Yt,
                                         const SignedHeat3DOptions& options);
@@ -92,7 +97,7 @@ class SignedHeatTetSolver {
     double averageFaceDataOnSource(VertexPositionGeometry& geometry, const Vector<double>& phi) const;
     double averageVertexDataOnSource(VertexPositionGeometry& geometry, const Vector<double>& phi) const;
     double averageVertexDataOnSource(pointcloud::PointPositionGeometry& pointGeom, const Vector<double>& phi) const;
-
+    
     //== tet mesh utilities
     Eigen::VectorXd computeTetVolumes() const;
     double computeTetVolume(size_t tIdx) const;
@@ -100,7 +105,7 @@ class SignedHeatTetSolver {
                      const Eigen::Vector3d& d) const;
     Eigen::Vector3d areaWeightedNormalVector(int fIdx) const;
     Eigen::Vector3d faceBarycenter(size_t fIdx) const;
-
+    
     //== tet-meshing
     std::string TET_PREFIX = "pq1.414zfenna"; // need -f, -e to output all faces, edges in tetmesh; -nn for adjacency
     std::string TETFLAGS, TETFLAGS_PRESERVE;
@@ -115,5 +120,33 @@ class SignedHeatTetSolver {
     //
     double calculateAverageEdgeLength(const EdgeDualNormalGeometry& edgeGeom);
     void tetmeshEdgeGeo(EdgeDualNormalGeometry& edgeGeom,
-                        const SignedHeat3DOptions& options);
+                        const SignedHeat3DOptions& options,
+                        const std::vector<Vector3>& extraPoints);
+    void clean_zero_edges_simple(Eigen::MatrixXd& V, Eigen::MatrixXi& F) const;
+    
+    
+    struct EdgeRefinementInfo {
+        size_t v0Idx, v1Idx;         // 四面体网格中两个顶点的索引
+        Vector3 newVertexPosition;   // 新顶点位置（中点）
+    };
+    
+    // 简单版本：基于接近度的启发式
+    bool checkEdgesNeedRefinement(
+        const Vector<double>& phi,
+        double isovalue,
+        std::vector<EdgeRefinementInfo>& edgesToRefine);
+    
+    
+    std::vector<Vector3> computeVertexGradients(const Vector<double>& phi);
+    Vector3 computeTetGradient(size_t tetIdx, const Vector<double>& phi);
+    
+    bool checkSingleEdgeNeedsRefinement(
+        double phi0, double phi1,
+        double grad0_proj, double grad1_proj,
+        double edgeLength, double isovalue,
+        double& refinementParam);
+    
+    
+    
+
 };

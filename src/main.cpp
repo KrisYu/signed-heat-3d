@@ -82,7 +82,7 @@ bool VERBOSE = true;
 bool HEADLESS;
 bool CONTOURED = false;
 
-bool AUTO_EXPORT_ISOSURFACE = true;  // 自动保存
+bool AUTO_EXPORT_ISOSURFACE = false;  // 自动保存
 void contour();
 
 void solve() {
@@ -182,8 +182,12 @@ void solve() {
     {
         // 自动生成和导出 contour = 0 的 isosurface
         if (PHI.size() > 0) {
+
             ISOVAL = 0.0;  // 设置为 0
-            
+//            ISOVAL = 0.00001;  // 设置为 0
+//            ISOVAL = 0.0001;  // 设置为 0
+//            ISOVAL = 0.001;  // 设置为 0
+
             // 直接使用 tetSolver 生成等值面，无需依赖 polyscope
             tetSolver->isosurface(isoMesh, isoGeom, PHI, ISOVAL);
             
