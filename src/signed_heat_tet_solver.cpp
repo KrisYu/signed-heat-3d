@@ -1427,31 +1427,19 @@ Vector<double> SignedHeatTetSolver::computeDistance(EdgeDualNormalGeometry& edge
     
     std::cout << "SignedHeatTetSolver with dual normals per edge" << std::endl;
 
+    // 初始网格构建（如果需要）
     if (options.rebuild || vertices.size() == 0) {
         std::chrono::time_point<high_resolution_clock> t1, t2;
         std::chrono::duration<double, std::milli> ms_fp;
         t1 = high_resolution_clock::now();
-        if (VERBOSE) std::cerr << "Building tet mesh..." << std::endl;
+        if (VERBOSE) std::cerr << "Building initial tet mesh..." << std::endl;
         
-        /*
-          Xue: Below are the steps using TetGen to tetrahedralize the input geometry:
-               1. Calculate mesh quality parameters and set TetGen FLAGS
-               2. Convert input edge geometry to point cloud format (required by TetGen)
-               3. Call tetmeshPointCloud() which handles the actual TetGen tetrahedralization
-               4. Post-process the generated tetrahedral mesh for numerical computation
-        */
-
-
-
         // Calculate mean edge length for area scaling
         double meanEdgeLength = calculateAverageEdgeLength(edgeGeom);
-        double targetArea = meanEdgeLength * meanEdgeLength; // 直接用边长平方
-//        double areaScale = std::pow(2, -options.hCoef);
-//        TETFLAGS = TET_PREFIX + std::to_string(areaScale * meanArea);
+        double targetArea = meanEdgeLength * meanEdgeLength;
         TETFLAGS = TET_PREFIX + std::to_string(targetArea);
         TETFLAGS_PRESERVE = TET_PREFIX + std::to_string(targetArea) + "Y";
         
-
         // Create point cloud from edge vertices for tetmesh generation
         const auto& vertices_data = edgeGeom.getVertices();
         size_t nPts = vertices_data.size();
@@ -1462,137 +1450,190 @@ Vector<double> SignedHeatTetSolver::computeDistance(EdgeDualNormalGeometry& edge
         }
         pointPolyGeom = std::unique_ptr<pointcloud::PointPositionGeometry>(
             new pointcloud::PointPositionGeometry(*cloud, pointPositions));
-        // 计算 bounding box
-        Vector3 bboxMin, bboxMax;
-
-        bboxMin = options.bboxMin;
-        bboxMax = options.bboxMax;
         
-//        tetmeshPointCloud(*pointPolyGeom, bboxMin, bboxMax);
+        // 初始四面体化（不包含额外点）
         std::vector<Vector3> emptyExtraPoints;
-        tetmeshEdgeGeo(edgeGeom,options, emptyExtraPoints);
+        tetmeshEdgeGeo(edgeGeom, options, emptyExtraPoints);
         
-        if (VERBOSE) std::cerr << "Computing tet mesh data..." << std::endl;
+        if (VERBOSE) std::cerr << "Computing initial tet mesh data..." << std::endl;
         meanNodeSpacing = computeMeanNodeSpacing();
         shortTime = options.tCoef * meanNodeSpacing * meanNodeSpacing;
         tetVolumes = computeTetVolumes();
-        if (VERBOSE) std::cerr << "Building Laplacian..." << std::endl;
         laplaceMat = dualLaplacian();
-        if (VERBOSE) std::cerr << "Tet mesh (re)built" << std::endl;
+        
         t2 = high_resolution_clock::now();
         ms_fp = t2 - t1;
-        if (VERBOSE) std::cerr << "Pre-compute time (s): " << ms_fp.count() / 1000. << std::endl;
+        if (VERBOSE) std::cerr << "Initial mesh build time (s): " << ms_fp.count() / 1000. << std::endl;
     }
 
-    if (VERBOSE) std::cerr << "Steps 1 & 2..." << std::endl;
+    // 主计算循环（最多2次迭代：初始计算 + 可能的细分重计算）
+    bool needsRefinement = true;
+    int maxIterations = 2;  // 限制迭代次数
+    int iteration = 0;
+    Vector<double> phi;
     
-    // Evaluate vectors at tet barycenters
-    Eigen::MatrixXd Yt = Eigen::MatrixXd::Zero(nTets, 3);
-    double lambda = std::sqrt(1. / shortTime);
-    
-    const auto& edges = edgeGeom.getEdges();
-    const auto& vertices_data = edgeGeom.getVertices();
-    const auto& normals1 = edgeGeom.getNormals1();
-    const auto& normals2 = edgeGeom.getNormals2();
-    size_t numEdges = edges.size();
-    
-    for (size_t i = 0; i < nTets; i++) {
-        // Compute tet barycenter (query point)
-        Vector3 q = {0, 0, 0};
-        for (int j = 0; j < 4; j++) {
-            for (int k = 0; k < 3; k++) q[k] += vertices(tets(i, j), k);
+    while (needsRefinement && iteration < maxIterations) {
+        if (iteration > 0 && VERBOSE) {
+            std::cerr << "Refinement iteration " << iteration << std::endl;
         }
-        q /= 4.;
         
-        // Integrate contributions from all edges
-        Vector3 X = {0, 0, 0};
-        for (size_t edgeIdx = 0; edgeIdx < numEdges; edgeIdx++) {
-            // Get edge endpoints
-            size_t v0Idx = edges[edgeIdx].first;
-            size_t v1Idx = edges[edgeIdx].second;
-            Vector3 v0 = vertices_data[v0Idx];
-            Vector3 v1 = vertices_data[v1Idx];
+        // Steps 1 & 2: 计算四面体中心的向量场
+        if (VERBOSE) std::cerr << "Steps 1 & 2..." << std::endl;
+        
+        Eigen::MatrixXd Yt = Eigen::MatrixXd::Zero(nTets, 3);
+        double lambda = std::sqrt(1. / shortTime);
+        
+        const auto& edges = edgeGeom.getEdges();
+        const auto& vertices_data = edgeGeom.getVertices();
+        const auto& normals1 = edgeGeom.getNormals1();
+        const auto& normals2 = edgeGeom.getNormals2();
+        size_t numEdges = edges.size();
+        
+        for (size_t i = 0; i < nTets; i++) {
+            // Compute tet barycenter (query point)
+            Vector3 q = {0, 0, 0};
+            for (int j = 0; j < 4; j++) {
+                for (int k = 0; k < 3; k++) q[k] += vertices(tets(i, j), k);
+            }
+            q /= 4.;
             
-            // Calculate edge midpoint (sample point on edge)
-            Vector3 p = (v0 + v1) * 0.5;
-            
-            // Get dual normals for this edge
-            Vector3 n = normals1[edgeIdx];
-            Vector3 n_prime = normals2[edgeIdx];
-            
-            // Calculate edge length as area weight
-            double edgeLength = (v1 - v0).norm();
-            double A = edgeLength;
-            
-            // Direction from edge midpoint to query point
-            Vector3 direction = q - p;
-            
-            // Calculate dot products to determine which side of each plane the query point is on
-            double dot1 = dot(direction, n);
-            double dot2 = dot(direction, n_prime);
-            
-            Vector3 normalToUse;
-            
-            // Logic for choosing which normal to use
-            if (dot1 > 0 && dot2 < 0) {
-                normalToUse = n;
-            } else if (dot1 < 0 && dot2 > 0) {
-                normalToUse = n_prime;
-            } else if (dot1 > 0 && dot2 > 0) {
-                // Outside both n1 and n2
-                Vector3 bisector = (n_prime + n) / 2;
-                bisector = bisector.normalize();
+            // Integrate contributions from all edges
+            Vector3 X = {0, 0, 0};
+            for (size_t edgeIdx = 0; edgeIdx < numEdges; edgeIdx++) {
+                // Get edge endpoints
+                size_t v0Idx = edges[edgeIdx].first;
+                size_t v1Idx = edges[edgeIdx].second;
+                Vector3 v0 = vertices_data[v0Idx];
+                Vector3 v1 = vertices_data[v1Idx];
                 
-                double dot_bisector = dot(direction, bisector);
-                assert(dot_bisector > 0);
+                // Calculate edge midpoint (sample point on edge)
+                Vector3 p = (v0 + v1) * 0.5;
                 
-                if (dot_bisector > dot1 && dot_bisector > dot2) {
-                    normalToUse = direction.normalize();
-                } else if (dot1 < dot2) {
-                    normalToUse = n_prime;
-                } else {
+                // Get dual normals for this edge
+                Vector3 n = normals1[edgeIdx];
+                Vector3 n_prime = normals2[edgeIdx];
+                
+                // Calculate edge length as area weight
+                double edgeLength = (v1 - v0).norm();
+                double A = edgeLength;
+                
+                // Direction from edge midpoint to query point
+                Vector3 direction = q - p;
+                
+                // Calculate dot products to determine which side of each plane the query point is on
+                double dot1 = dot(direction, n);
+                double dot2 = dot(direction, n_prime);
+                
+                Vector3 normalToUse;
+                
+                // Logic for choosing which normal to use
+                if (dot1 > 0 && dot2 < 0) {
                     normalToUse = n;
-                }
-            } else {
-                if (dot1 > dot2) {
-                    normalToUse = n;
-                } else {
+                } else if (dot1 < 0 && dot2 > 0) {
                     normalToUse = n_prime;
+                } else if (dot1 > 0 && dot2 > 0) {
+                    // Outside both n1 and n2
+                    Vector3 bisector = (n_prime + n) / 2;
+                    bisector = bisector.normalize();
+                    
+                    double dot_bisector = dot(direction, bisector);
+                    assert(dot_bisector > 0);
+                    
+                    if (dot_bisector > dot1 && dot_bisector > dot2) {
+                        normalToUse = direction.normalize();
+                    } else if (dot1 < dot2) {
+                        normalToUse = n_prime;
+                    } else {
+                        normalToUse = n;
+                    }
+                } else {
+                    if (dot1 > dot2) {
+                        normalToUse = n;
+                    } else {
+                        normalToUse = n_prime;
+                    }
                 }
+                
+                X += yukawaPotential(p, q, lambda) * normalToUse * A;
             }
             
-            X += yukawaPotential(p, q, lambda) * normalToUse * A;
+            X /= X.norm();
+            for (int j = 0; j < 3; j++) Yt(i, j) = X[j];
+        }
+        if (VERBOSE) std::cerr << "\tCompleted." << std::endl;
+
+        // Step 3: 积分得到距离函数
+        if (VERBOSE) std::cerr << "Step 3..." << std::endl;
+        
+        pointPolyGeom->requireTuftedTriangulation();
+        pointPolyGeom->tuftedGeom->requireVertexDualAreas();
+        
+        phi = options.fastIntegration ? integrateVectorFieldGreedily(*pointPolyGeom, Yt, options)
+                                      : integrateVectorField(*pointPolyGeom, Yt, options);
+        
+        pointPolyGeom->tuftedGeom->unrequireVertexDualAreas();
+        pointPolyGeom->unrequireTuftedTriangulation();
+        
+        if (VERBOSE) std::cerr << "\tCompleted." << std::endl;
+
+        // 关键部分：检查是否需要边细分（只在第一次迭代中检查）
+        if (iteration == 0) {
+            std::vector<EdgeRefinementInfo> edgesToRefine;
+            double isovalue = 0.0;  // 等值线
+
+            if (checkEdgesNeedRefinement(edgeGeom, phi, isovalue, edgesToRefine)) {
+                if (VERBOSE) {
+                    std::cout << "Found " << edgesToRefine.size() << " edges that need refinement" << std::endl;
+                    std::cout << "Rebuilding mesh with additional constraint points..." << std::endl;
+                }
+                
+                // 提取新的约束点
+                std::vector<Vector3> extraPoints;
+                for (const auto& info : edgesToRefine) {
+                    extraPoints.push_back(info.newVertexPosition);
+                }
+                
+                // 重建包含新约束点的四面体网格
+                std::chrono::time_point<high_resolution_clock> refine_start = high_resolution_clock::now();
+                
+                tetmeshEdgeGeo(edgeGeom, options, extraPoints);
+                
+                // 重新计算网格数据
+                meanNodeSpacing = computeMeanNodeSpacing();
+                shortTime = options.tCoef * meanNodeSpacing * meanNodeSpacing;
+                tetVolumes = computeTetVolumes();
+                laplaceMat = dualLaplacian();
+                
+                std::chrono::time_point<high_resolution_clock> refine_end = high_resolution_clock::now();
+                auto refine_time = std::chrono::duration_cast<std::chrono::milliseconds>(refine_end - refine_start);
+                
+                if (VERBOSE) {
+                    std::cout << "Mesh refinement completed in " << refine_time.count() << " ms" << std::endl;
+                    std::cout << "New mesh has " << vertices.rows() << " vertices and " << nTets << " tetrahedra" << std::endl;
+                }
+                
+                // 继续下一次迭代
+                iteration++;
+                continue;
+            } else {
+                if (VERBOSE) std::cout << "No edges need refinement, mesh is adequate" << std::endl;
+                needsRefinement = false;
+            }
+        } else {
+            // 第二次迭代，不再检查细分
+            needsRefinement = false;
         }
         
-        X /= X.norm();
-        for (int j = 0; j < 3; j++) Yt(i, j) = X[j];
-    }
-    if (VERBOSE) std::cerr << "\tCompleted." << std::endl;
-
-    if (VERBOSE) std::cerr << "Step 3..." << std::endl;
-    
-    // Use point cloud geometry for integration since we're working with non-conforming mesh
-    pointPolyGeom->requireTuftedTriangulation();
-    pointPolyGeom->tuftedGeom->requireVertexDualAreas();
-    
-    Vector<double> phi = options.fastIntegration ? integrateVectorFieldGreedily(*pointPolyGeom, Yt, options)
-                                                 : integrateVectorField(*pointPolyGeom, Yt, options);
-    
-    pointPolyGeom->tuftedGeom->unrequireVertexDualAreas();
-    pointPolyGeom->unrequireTuftedTriangulation();
-    
-    if (VERBOSE) std::cerr << "\tCompleted." << std::endl;
-
-    std::vector<EdgeRefinementInfo> edgesToRefine;
-    double isovalue = 0.0;  // 你的等值线
-
-    if (checkEdgesNeedRefinement(edgeGeom, phi, isovalue, edgesToRefine)) {
-        std::cout << "Found " << edgesToRefine.size() << " edges to refine" << std::endl;
-        // 然后进行边细分...
+        iteration++;
     }
     
+    if (VERBOSE) {
+        std::cout << "Distance computation completed after " << iteration << " iteration(s)" << std::endl;
+    }
+
     return phi;
 }
+
 
 
 
@@ -1735,6 +1776,8 @@ void SignedHeatTetSolver::tetmeshEdgeGeo(EdgeDualNormalGeometry& edgeGeom,
 
     double meanEdgeLength = calculateAverageEdgeLength(edgeGeom);
     double targetArea = meanEdgeLength * meanEdgeLength;
+//    double targetArea = meanEdgeLength * meanEdgeLength * meanEdgeLength;
+
     std::string tetFlags = EDGE_TET_PREFIX + std::to_string(targetArea);
 
     try {
