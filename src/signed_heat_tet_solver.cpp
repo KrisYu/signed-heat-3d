@@ -1,6 +1,7 @@
 #include "signed_heat_tet_solver.h"
 
 #include "polyscope/volume_mesh.h"
+#include <unordered_map>
 
 SignedHeatTetSolver::SignedHeatTetSolver() {}
 
@@ -1417,8 +1418,6 @@ double SignedHeatTetSolver::computeMeanNodeSpacing() const {
 }
 
 
-// to deal with 
-
 // Modified computeDistance function for EdgeDualNormalGeometry
 // 这是用来处理 dual normal per edge 的函数
 Vector<double> SignedHeatTetSolver::computeDistance(EdgeDualNormalGeometry& edgeGeom,
@@ -1587,7 +1586,7 @@ Vector<double> SignedHeatTetSolver::computeDistance(EdgeDualNormalGeometry& edge
     std::vector<EdgeRefinementInfo> edgesToRefine;
     double isovalue = 0.0;  // 你的等值线
 
-    if (checkEdgesNeedRefinement(phi, isovalue, edgesToRefine)) {
+    if (checkEdgesNeedRefinement(edgeGeom, phi, isovalue, edgesToRefine)) {
         std::cout << "Found " << edgesToRefine.size() << " edges to refine" << std::endl;
         // 然后进行边细分...
     }
@@ -1756,12 +1755,56 @@ void SignedHeatTetSolver::tetmeshEdgeGeo(EdgeDualNormalGeometry& edgeGeom,
 
 
 
-
 // 简单启发式：检查四面体网格边是否需要在中点插入顶点
 bool SignedHeatTetSolver::checkEdgesNeedRefinement(
+    const EdgeDualNormalGeometry& edgeGeom,
     const Vector<double>& phi,
     double isovalue,
     std::vector<EdgeRefinementInfo>& edgesToRefine) {
+    
+    // 首先收集 edgeGeom 中已存在的边，这些边不需要检查
+    std::set<std::pair<size_t, size_t>> existingEdges;
+    const auto& vertices_data = edgeGeom.getVertices();
+    const auto& edges = edgeGeom.getEdges();
+    
+    // 需要建立四面体顶点索引到 edgeGeom 顶点索引的映射
+    std::unordered_map<size_t, size_t> tetVertToEdgeVertMap;
+    
+    // 遍历四面体顶点，找到对应的 edgeGeom 顶点
+    for (size_t tetVertIdx = 0; tetVertIdx < vertices.rows(); tetVertIdx++) {
+        Vector3 tetVertPos{vertices(tetVertIdx, 0), vertices(tetVertIdx, 1), vertices(tetVertIdx, 2)};
+        
+        // 在 edgeGeom 顶点中找到匹配的点
+        for (size_t edgeVertIdx = 0; edgeVertIdx < vertices_data.size(); edgeVertIdx++) {
+            Vector3 edgeVertPos = vertices_data[edgeVertIdx];
+            if ((tetVertPos - edgeVertPos).norm() < 1e-6) {
+                tetVertToEdgeVertMap[tetVertIdx] = edgeVertIdx;
+                break;
+            }
+        }
+    }
+    
+    // 将 edgeGeom 中的边转换为四面体顶点索引
+    for (const auto& edge : edges) {
+        size_t edgeV0 = edge.first;
+        size_t edgeV1 = edge.second;
+        
+        // 找到对应的四面体顶点索引
+        size_t tetV0 = SIZE_MAX, tetV1 = SIZE_MAX;
+        for (const auto& mapping : tetVertToEdgeVertMap) {
+            if (mapping.second == edgeV0) tetV0 = mapping.first;
+            if (mapping.second == edgeV1) tetV1 = mapping.first;
+        }
+        
+        if (tetV0 != SIZE_MAX && tetV1 != SIZE_MAX) {
+            if (tetV0 > tetV1) std::swap(tetV0, tetV1);
+            existingEdges.insert({tetV0, tetV1});
+        }
+    }
+    
+    if (VERBOSE) {
+        std::cerr << "Found " << existingEdges.size() << " existing edges from edgeGeom to skip" << std::endl;
+    }
     
     // 收集所有四面体边（避免重复）
     std::set<std::pair<size_t, size_t>> uniqueEdges;
@@ -1786,47 +1829,53 @@ bool SignedHeatTetSolver::checkEdgesNeedRefinement(
     }
     
     std::cout << "Checking " << uniqueEdges.size() << " unique tetrahedral edges" << std::endl;
-    
+    std::cout << "Skipping " << existingEdges.size() << " edges that already exist in edgeGeom" << std::endl;
     
     bool foundEdgesToRefine = false;
     double threshold = 0.1 * meanNodeSpacing;  // 可调参数：接近等值线的阈值
-
+    
     // 检查每条四面体边
     for (const auto& edge : uniqueEdges) {
         size_t v0Idx = edge.first;
         size_t v1Idx = edge.second;
-
+        
+        // 跳过 edgeGeom 中已存在的边
+        if (existingEdges.count(edge) > 0) {
+            continue;
+        }
+        
         double phi0 = phi[v0Idx];
         double phi1 = phi[v1Idx];
-
+        
         // 如果端点在等值线异侧，传统方法已经能处理，跳过
         if ((phi0 - isovalue) * (phi1 - isovalue) < 0) {
             continue;
         }
-
+        
         // 简单启发式：两端点都在同侧，但都接近等值线
         double dist0 = std::abs(phi0 - isovalue);
         double dist1 = std::abs(phi1 - isovalue);
-
+        
         if (dist0 <= threshold && dist1 <= threshold) {
             // 两个端点都接近等值线，在中点插入顶点
             EdgeRefinementInfo info;
             info.v0Idx = v0Idx;
             info.v1Idx = v1Idx;
-
+            
             // 计算中点位置
             Vector3 v0{vertices(v0Idx, 0), vertices(v0Idx, 1), vertices(v0Idx, 2)};
             Vector3 v1{vertices(v1Idx, 0), vertices(v1Idx, 1), vertices(v1Idx, 2)};
             info.newVertexPosition = (v0 + v1) * 0.5;
-
+            
             edgesToRefine.push_back(info);
             foundEdgesToRefine = true;
         }
     }
-
+    
     std::cout << "Found " << edgesToRefine.size() << " edges that need midpoint insertion" << std::endl;
     return foundEdgesToRefine;
 }
+
 
 // 计算顶点梯度（基于四面体网格）
 std::vector<Vector3> SignedHeatTetSolver::computeVertexGradients(const Vector<double>& phi) {

@@ -132,6 +132,7 @@ private:
     
     // 简单版本：基于接近度的启发式
     bool checkEdgesNeedRefinement(
+                                  const EdgeDualNormalGeometry& edgeGeom,
         const Vector<double>& phi,
         double isovalue,
         std::vector<EdgeRefinementInfo>& edgesToRefine);
