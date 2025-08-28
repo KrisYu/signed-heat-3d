@@ -130,10 +130,13 @@ private:
         Vector3 newVertexPosition;   // 新顶点位置（中点）
     };
     
+    static Vector3 estimateNormalAtPoint( const EdgeDualNormalGeometry& edgeGeom, double lambda, const Vector3& q );
+
     // 简单版本：基于接近度的启发式
     bool checkEdgesNeedRefinement(
                                   const EdgeDualNormalGeometry& edgeGeom,
         const Vector<double>& phi,
+        double lambda,
         double isovalue,
         std::vector<EdgeRefinementInfo>& edgesToRefine);
     
@@ -146,7 +149,9 @@ private:
         double grad0_proj, double grad1_proj,
         double edgeLength, double isovalue,
         double& refinementParam);
-    
+    void exportData(const Vector<double>& phi, const SignedHeat3DOptions& options) const ;
+    void exportMesh(const SignedHeat3DOptions& options) const;
+    void exportDataAndMesh(const Vector<double>& phi, const SignedHeat3DOptions& options) const;
     
     
 

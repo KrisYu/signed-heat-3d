@@ -13,6 +13,13 @@ Eigen::MatrixXi SignedHeatTetSolver::getTets() const {
     return tets;
 }
 
+namespace {
+    Vector3 eigenToGC(const Eigen::Vector3d& eigenVec) {
+        return Vector3{eigenVec(0), eigenVec(1), eigenVec(2)};
+    }
+}
+
+
 // =============== ALGORITHM
 
 Vector<double> SignedHeatTetSolver::computeDistance(VertexPositionGeometry& geometry,
@@ -884,9 +891,11 @@ void SignedHeatTetSolver::isosurface(std::unique_ptr<SurfaceMesh>& isoMesh,
     igl::marching_tets(vertices, tets, phi, isoval, SV, SF, J, BC);
 //    clean_zero_edges_simple(SV, SF);
     std::tie(isoMesh, isoGeom) = makeSurfaceMeshAndGeometry(SV, SF);
-    
-    
 }
+
+
+
+
 
 void SignedHeatTetSolver::clean_zero_edges_simple(Eigen::MatrixXd& V, Eigen::MatrixXi& F) const {
     double epsilon = 1e-8;
@@ -1488,7 +1497,7 @@ Vector<double> SignedHeatTetSolver::computeDistance(EdgeDualNormalGeometry& edge
         const auto& normals1 = edgeGeom.getNormals1();
         const auto& normals2 = edgeGeom.getNormals2();
         size_t numEdges = edges.size();
-        
+
         for (size_t i = 0; i < nTets; i++) {
             // Compute tet barycenter (query point)
             Vector3 q = {0, 0, 0};
@@ -1497,67 +1506,8 @@ Vector<double> SignedHeatTetSolver::computeDistance(EdgeDualNormalGeometry& edge
             }
             q /= 4.;
             
-            // Integrate contributions from all edges
-            Vector3 X = {0, 0, 0};
-            for (size_t edgeIdx = 0; edgeIdx < numEdges; edgeIdx++) {
-                // Get edge endpoints
-                size_t v0Idx = edges[edgeIdx].first;
-                size_t v1Idx = edges[edgeIdx].second;
-                Vector3 v0 = vertices_data[v0Idx];
-                Vector3 v1 = vertices_data[v1Idx];
-                
-                // Calculate edge midpoint (sample point on edge)
-                Vector3 p = (v0 + v1) * 0.5;
-                
-                // Get dual normals for this edge
-                Vector3 n = normals1[edgeIdx];
-                Vector3 n_prime = normals2[edgeIdx];
-                
-                // Calculate edge length as area weight
-                double edgeLength = (v1 - v0).norm();
-                double A = edgeLength;
-                
-                // Direction from edge midpoint to query point
-                Vector3 direction = q - p;
-                
-                // Calculate dot products to determine which side of each plane the query point is on
-                double dot1 = dot(direction, n);
-                double dot2 = dot(direction, n_prime);
-                
-                Vector3 normalToUse;
-                
-                // Logic for choosing which normal to use
-                if (dot1 > 0 && dot2 < 0) {
-                    normalToUse = n;
-                } else if (dot1 < 0 && dot2 > 0) {
-                    normalToUse = n_prime;
-                } else if (dot1 > 0 && dot2 > 0) {
-                    // Outside both n1 and n2
-                    Vector3 bisector = (n_prime + n) / 2;
-                    bisector = bisector.normalize();
-                    
-                    double dot_bisector = dot(direction, bisector);
-                    assert(dot_bisector > 0);
-                    
-                    if (dot_bisector > dot1 && dot_bisector > dot2) {
-                        normalToUse = direction.normalize();
-                    } else if (dot1 < dot2) {
-                        normalToUse = n_prime;
-                    } else {
-                        normalToUse = n;
-                    }
-                } else {
-                    if (dot1 > dot2) {
-                        normalToUse = n;
-                    } else {
-                        normalToUse = n_prime;
-                    }
-                }
-                
-                X += yukawaPotential(p, q, lambda) * normalToUse * A;
-            }
+            Vector3 X = estimateNormalAtPoint( edgeGeom, lambda, q );
             
-            X /= X.norm();
             for (int j = 0; j < 3; j++) Yt(i, j) = X[j];
         }
         if (VERBOSE) std::cerr << "\tCompleted." << std::endl;
@@ -1584,7 +1534,7 @@ Vector<double> SignedHeatTetSolver::computeDistance(EdgeDualNormalGeometry& edge
             std::vector<EdgeRefinementInfo> edgesToRefine;
             double isovalue = 0.0;
 
-            if (checkEdgesNeedRefinement(edgeGeom, phi, isovalue, edgesToRefine)) {
+            if (checkEdgesNeedRefinement(edgeGeom, phi, lambda, isovalue, edgesToRefine)) {
                 // 只有在还有剩余迭代次数时才实际进行细分
                 if (iteration < maxIterations - 1) {
                     if (VERBOSE) {
@@ -1653,7 +1603,8 @@ Vector<double> SignedHeatTetSolver::computeDistance(EdgeDualNormalGeometry& edge
         std::cout << std::endl;
         std::cout << "Final phi size: " << phi.size() << ", expected vertices: " << vertices.rows() << std::endl;
     }
-
+    
+    exportDataAndMesh(phi, options);
     return phi;
 }
 
@@ -1799,7 +1750,7 @@ void SignedHeatTetSolver::tetmeshEdgeGeo(EdgeDualNormalGeometry& edgeGeom,
 
     double meanEdgeLength = calculateAverageEdgeLength(edgeGeom);
     double targetArea = meanEdgeLength * meanEdgeLength;
-//    double targetArea = meanEdgeLength * meanEdgeLength * meanEdgeLength;
+//    double targetArea = meanEdgeLength * meanEdgeLength * meanEdgeLength / 10;
 
     std::string tetFlags = EDGE_TET_PREFIX + std::to_string(targetArea);
 
@@ -1817,14 +1768,89 @@ void SignedHeatTetSolver::tetmeshEdgeGeo(EdgeDualNormalGeometry& edgeGeom,
     
     // Get tet mesh info
     getTetmeshData(out);
+    
+    // Display the tetmesh in the GUI.
+//    polyscope::VolumeMesh* psVolumeMesh = polyscope::registerTetMesh("domain", vertices, tets);
+//    polyscope::show();
+
 }
 
+Vector3 SignedHeatTetSolver::estimateNormalAtPoint( const EdgeDualNormalGeometry& edgeGeom, double lambda, const Vector3& q ) {
+    const auto& edges = edgeGeom.getEdges();
+    const auto& vertices_data = edgeGeom.getVertices();
+    const auto& normals1 = edgeGeom.getNormals1();
+    const auto& normals2 = edgeGeom.getNormals2();
+    size_t numEdges = edges.size();
 
+    // Integrate contributions from all edges
+    Vector3 X = {0, 0, 0};
+    for (size_t edgeIdx = 0; edgeIdx < numEdges; edgeIdx++) {
+        // Get edge endpoints
+        size_t v0Idx = edges[edgeIdx].first;
+        size_t v1Idx = edges[edgeIdx].second;
+        Vector3 v0 = vertices_data[v0Idx];
+        Vector3 v1 = vertices_data[v1Idx];
+        
+        // Calculate edge midpoint (sample point on edge)
+        Vector3 p = (v0 + v1) * 0.5;
+        
+        // Get dual normals for this edge
+        Vector3 n = normals1[edgeIdx];
+        Vector3 n_prime = normals2[edgeIdx];
+        
+        // Calculate edge length as area weight
+        double edgeLength = (v1 - v0).norm();
+        double A = edgeLength;
+        
+        // Direction from edge midpoint to query point
+        Vector3 direction = q - p;
+        
+        // Calculate dot products to determine which side of each plane the query point is on
+        double dot1 = dot(direction, n);
+        double dot2 = dot(direction, n_prime);
+        
+        Vector3 normalToUse;
+        
+        // Logic for choosing which normal to use
+        if (dot1 > 0 && dot2 < 0) {
+            normalToUse = n;
+        } else if (dot1 < 0 && dot2 > 0) {
+            normalToUse = n_prime;
+        } else if (dot1 > 0 && dot2 > 0) {
+            // Outside both n1 and n2
+            Vector3 bisector = (n_prime + n) / 2;
+            bisector = bisector.normalize();
+            
+            double dot_bisector = dot(direction, bisector);
+            assert(dot_bisector > 0);
+            
+            if (dot_bisector > dot1 && dot_bisector > dot2) {
+                normalToUse = direction.normalize();
+            } else if (dot1 < dot2) {
+                normalToUse = n_prime;
+            } else {
+                normalToUse = n;
+            }
+        } else {
+            if (dot1 > dot2) {
+                normalToUse = n;
+            } else {
+                normalToUse = n_prime;
+            }
+        }
+        
+        X += yukawaPotential(p, q, lambda) * normalToUse * A;
+    }
+    
+    X /= X.norm();
+    return X;
+}
 
 // 简单启发式：检查四面体网格边是否需要在中点插入顶点
 bool SignedHeatTetSolver::checkEdgesNeedRefinement(
     const EdgeDualNormalGeometry& edgeGeom,
     const Vector<double>& phi,
+    double lambda,
     double isovalue,
     std::vector<EdgeRefinementInfo>& edgesToRefine) {
     
@@ -1835,6 +1861,8 @@ bool SignedHeatTetSolver::checkEdgesNeedRefinement(
     
     // 需要建立四面体顶点索引到 edgeGeom 顶点索引的映射
     std::unordered_map<size_t, size_t> tetVertToEdgeVertMap;
+
+    const double EPS = 1e-6;
     
     // 遍历四面体顶点，找到对应的 edgeGeom 顶点
     for (size_t tetVertIdx = 0; tetVertIdx < vertices.rows(); tetVertIdx++) {
@@ -1843,7 +1871,7 @@ bool SignedHeatTetSolver::checkEdgesNeedRefinement(
         // 在 edgeGeom 顶点中找到匹配的点
         for (size_t edgeVertIdx = 0; edgeVertIdx < vertices_data.size(); edgeVertIdx++) {
             Vector3 edgeVertPos = vertices_data[edgeVertIdx];
-            if ((tetVertPos - edgeVertPos).norm() < 1e-6) {
+            if ((tetVertPos - edgeVertPos).norm() < EPS) {
                 tetVertToEdgeVertMap[tetVertIdx] = edgeVertIdx;
                 break;
             }
@@ -1900,6 +1928,7 @@ bool SignedHeatTetSolver::checkEdgesNeedRefinement(
     bool foundEdgesToRefine = false;
     double threshold = 0.1 * meanNodeSpacing;  // 可调参数：接近等值线的阈值
     
+    std::cout << "threshold " << threshold << std::endl;
     // 检查每条四面体边
     for (const auto& edge : uniqueEdges) {
         size_t v0Idx = edge.first;
@@ -1910,10 +1939,24 @@ bool SignedHeatTetSolver::checkEdgesNeedRefinement(
             continue;
         }
         
+        // if (( v0Idx >= edgeGeom.getVertices().size() ) && ( v1Idx >= edgeGeom.getVertices().size() )) continue;
+        // Check if both vertices are on the bounding box.
+        if(
+            // Is v0 on the bounding box?
+            ( ( vertices.row(v0Idx).minCoeff() < -1 + EPS ) || ( vertices.row(v0Idx).maxCoeff() > 1 - EPS ) )
+            // and
+            &&
+            // Is v1 on the bounding box?
+            ( ( vertices.row(v1Idx).minCoeff() < -1 + EPS ) || ( vertices.row(v1Idx).maxCoeff() > 1 - EPS ) )
+        ) {
+            continue;
+        }
+        
         double phi0 = phi[v0Idx];
         double phi1 = phi[v1Idx];
         
         // 如果端点在等值线异侧，传统方法已经能处理，跳过
+        // If they are on different sides of the isovalue, skip the edge.
         if ((phi0 - isovalue) * (phi1 - isovalue) < 0) {
             continue;
         }
@@ -1922,7 +1965,121 @@ bool SignedHeatTetSolver::checkEdgesNeedRefinement(
         double dist0 = std::abs(phi0 - isovalue);
         double dist1 = std::abs(phi1 - isovalue);
         
-        if (dist0 <= threshold && dist1 <= threshold) {
+        bool shouldSplit = false;
+        double splitAt = 0.5; // 默认在中点分割
+        
+//        if (dist0 <= threshold && dist1 <= threshold) shouldSplit = true;
+
+        /*
+        TODO:
+        We know values at the endpoints.
+        If both endpoints are above (resp. below) the isovalue,
+        check if the function as a higher-order polynomial would dip down (resp. up) and cross the isovalue.
+        If we have the gradients at the endpoints, we can project them onto the line segment,
+        fit a cubic polynomial, and see if it has a minima (resp. maxima) by taking its derivative
+        and solving the resulting the quadratic formula.
+        */
+        const double x0 = 0;
+        Eigen::Vector3d along = vertices.row(v1Idx) - vertices.row(v0Idx);
+        const double x1 = ( along ).norm();
+        // Normalize along so we can project onto it.
+        along /= x1;
+
+        const double f0 = phi0;
+        const double f1 = phi1;
+
+        const double dfdx0 = dot( estimateNormalAtPoint( edgeGeom, lambda, eigenToGC( vertices.row(v0Idx)) ), eigenToGC(along ));
+        const double dfdx1 = dot( estimateNormalAtPoint( edgeGeom, lambda, eigenToGC( vertices.row(v1Idx)) ), eigenToGC( along ));
+
+        /// Solve for a cubic polynomial for the line segment.
+        // f(x) = ax^3 + bx^2 + cx + d
+        // f(x0) = f(0) = d = f0;
+        // df/dx(x0) = df/dx(0) = c = dfdx0
+        // f(x1) = a x1^3 + b x1^2 + dfdx0 x1 + f0 = phi1
+        // df/dx(x1) = 3a x1^2 + 2b x1 + dfdx0 = dfdx1
+        Eigen::Matrix4d A(4,4);
+        Eigen::Vector4d rhs(4);
+        // Fill the matrix and right-hand-side with our equations.
+        A.row(0) << 0, 0, 0, 1;
+        rhs(0) = f0;
+        A.row(1) << 0, 0, 1, 0;
+        rhs(1) = dfdx0;
+        A.row(2) << x1*x1*x1, x1*x1, x1, 1;
+        rhs(2) = f1;
+        A.row(3) << 3*x1*x1, 2*x1, 1, 0;
+        rhs(3) = dfdx1;
+        Eigen::Vector4d abcd = A.jacobiSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(rhs);
+        
+
+        /// Find the minimum and maximum of the cubic by solving the quadratic formula.
+        // Discard solutions outside of (x0,x1).
+        const double a = abcd(0);
+        const double b = abcd(1);
+        const double c = abcd(2);
+        const double d = abcd(3);
+        // df/dx = 3ax^2 + 2bx + c
+        const double discriminant = 4*b*b - 12*a*c;
+        double x_solution0 = -1;
+        double x_solution1 = -1;
+        if( discriminant >= 0 ) {
+            x_solution0 = ( -2*b + std::sqrt(discriminant) ) / ( 6*a );
+            x_solution1 = ( -2*b - std::sqrt(discriminant) ) / ( 6*a );
+            
+            bool solution0_valid = (x_solution0 > 0 && x_solution0 < x1);
+            bool solution1_valid = (x_solution1 > 0 && x_solution1 < x1);
+            
+        }
+        
+        const double f_solution0 = a*x_solution0*x_solution0*x_solution0 + b*x_solution0*x_solution0 + c*x_solution0 + d;
+        const double f_solution1 = a*x_solution1*x_solution1*x_solution1 + b*x_solution1*x_solution1 + c*x_solution1 + d;
+
+        double f_solution_max = f_solution0;
+        double f_solution_min = f_solution1;
+        double x_solution_max = x_solution0;
+        double x_solution_min = x_solution1;
+        if( f_solution0 > f_solution1 ) {
+            // Swap so that _max is the maximum and _min is the minimum.
+            std::swap( f_solution_max, f_solution_min );
+            std::swap( x_solution_max, x_solution_min );
+        }
+
+        std::cout<< "abcd " << abcd << std::endl;
+
+        std::cout << "x_solution_max " << x_solution_max << std::endl;
+        std::cout << "f_solution_max " << f_solution_max << std::endl;
+        
+        std::cout << "x_solution_min " << x_solution_min << std::endl;
+        std::cout << "f_solution_min " << f_solution_min << std::endl;
+        
+        std::cout << std::endl;
+
+
+        /// If phi0 and phi1 are both greater than the isovalue,
+        /// we split at the minimum quadratic formula solution
+        /// if it is within (x0,x1) and evaluates to less than the isovalue.
+        if(
+            ( phi0 > isovalue && phi1 > isovalue )
+            &&
+            ( x_solution_min > 0 && x_solution_min < x1 && f_solution_min < isovalue )
+        ) {
+            shouldSplit = true;
+            splitAt = x_solution_min/x1;
+        }
+
+        /// If phi0 and phi1 are both less than the isovalue,
+        /// we split at the maximum quadratic formula solution
+        /// if it is within (x0,x1) and evaluates to greater than the isovalue.
+        if(
+            ( phi0 < isovalue && phi1 < isovalue )
+            &&
+            ( x_solution_max > 0 && x_solution_max < x1 && f_solution_max > isovalue )
+        ) {
+            shouldSplit = true;
+            splitAt = x_solution_max/x1;
+        }
+
+        if( shouldSplit )
+        {
             // 两个端点都接近等值线，在中点插入顶点
             EdgeRefinementInfo info;
             info.v0Idx = v0Idx;
@@ -1931,7 +2088,7 @@ bool SignedHeatTetSolver::checkEdgesNeedRefinement(
             // 计算中点位置
             Vector3 v0{vertices(v0Idx, 0), vertices(v0Idx, 1), vertices(v0Idx, 2)};
             Vector3 v1{vertices(v1Idx, 0), vertices(v1Idx, 1), vertices(v1Idx, 2)};
-            info.newVertexPosition = (v0 + v1) * 0.5;
+            info.newVertexPosition = v0 + (v1 - v0) * splitAt;
             
             edgesToRefine.push_back(info);
             foundEdgesToRefine = true;
@@ -1942,4 +2099,126 @@ bool SignedHeatTetSolver::checkEdgesNeedRefinement(
     return foundEdgesToRefine;
 }
 
+
+/*
+ * Write CSV file, where each row is a vertex of the tetrahedral mesh.
+ * The vertex positions are stored in the vertices matrix.
+ * Columns: xCoord, yCoord, zCoord, SDF
+ * The first three columns record the (x,y,z) position of the vertex.
+ * "SDF" records the SDF value at the vertex.
+ */
+void SignedHeatTetSolver::exportData(const Vector<double>& phi, const SignedHeat3DOptions& options) const {
+    
+
+    std::string filename = "../export/" + options.meshname + "_tet.csv";
+    std::fstream f;
+    f.open(filename, std::ios::out | std::ios::trunc);
+    
+    if (f.is_open()) {
+        f << "xCoord,yCoord,zCoord,SDF" << "\n";
+        
+        // 遍历所有四面体网格顶点
+        for (size_t i = 0; i < vertices.rows(); i++) {
+            // vertices 是存储顶点坐标的矩阵 (nVertices × 3)
+            double x = vertices(i, 0);
+            double y = vertices(i, 1);
+            double z = vertices(i, 2);
+            double sdf = phi[i];
+            
+            f << x << "," << y << "," << z << "," << sdf << "\n";
+        }
+        
+        f.close();
+        if (VERBOSE) std::cerr << "File " << filename << " written successfully." << std::endl;
+    } else {
+        if (VERBOSE) std::cerr << "Could not export '" << filename << "'!" << std::endl;
+    }
+}
+
+/*
+ * Export tetrahedral mesh vertices and tetrahedra to CSV files
+ * This allows exact reconstruction of the mesh in Python for visualization
+ */
+void SignedHeatTetSolver::exportMesh(const SignedHeat3DOptions& options) const {
+    
+    // Export vertices
+    std::string vertices_filename = "../export/" + options.meshname + "_vertices.csv";
+    std::fstream vertices_file;
+    vertices_file.open(vertices_filename, std::ios::out | std::ios::trunc);
+    
+    if (vertices_file.is_open()) {
+        vertices_file << "x,y,z" << "\n";
+        for (size_t i = 0; i < vertices.rows(); i++) {
+            vertices_file << vertices(i, 0) << ","
+                         << vertices(i, 1) << ","
+                         << vertices(i, 2) << "\n";
+        }
+        vertices_file.close();
+        if (VERBOSE) std::cerr << "Vertices file " << vertices_filename << " written successfully." << std::endl;
+    } else {
+        if (VERBOSE) std::cerr << "Could not export vertices file '" << vertices_filename << "'!" << std::endl;
+    }
+    
+    // Export tetrahedra
+    std::string tets_filename = "../export/" + options.meshname + "_tets.csv";
+    std::fstream tets_file;
+    tets_file.open(tets_filename, std::ios::out | std::ios::trunc);
+    
+    if (tets_file.is_open()) {
+        tets_file << "v0,v1,v2,v3" << "\n";
+        for (size_t i = 0; i < nTets; i++) {
+            tets_file << tets(i, 0) << ","
+                     << tets(i, 1) << ","
+                     << tets(i, 2) << ","
+                     << tets(i, 3) << "\n";
+        }
+        tets_file.close();
+        if (VERBOSE) std::cerr << "Tetrahedra file " << tets_filename << " written successfully." << std::endl;
+    } else {
+        if (VERBOSE) std::cerr << "Could not export tetrahedra file '" << tets_filename << "'!" << std::endl;
+    }
+    
+    if (VERBOSE) {
+        std::cout << "Mesh export summary:" << std::endl;
+        std::cout << "  Vertices: " << vertices.rows() << std::endl;
+        std::cout << "  Tetrahedra: " << nTets << std::endl;
+        std::cout << "  Files: " << vertices_filename << ", " << tets_filename << std::endl;
+    }
+}
+
+/*
+ * Combined export function - exports both SDF data and mesh structure
+ * This gives you everything needed for exact visualization in Python
+ */
+void SignedHeatTetSolver::exportDataAndMesh(const Vector<double>& phi, const SignedHeat3DOptions& options) const {
+    
+    // Export SDF data (original function)
+    std::string sdf_filename = "../export/" + options.meshname + "_sdf.csv";
+    std::fstream sdf_file;
+    sdf_file.open(sdf_filename, std::ios::out | std::ios::trunc);
+    
+    if (sdf_file.is_open()) {
+        sdf_file << "xCoord,yCoord,zCoord,SDF" << "\n";
+        for (size_t i = 0; i < vertices.rows(); i++) {
+            sdf_file << vertices(i, 0) << ","
+                    << vertices(i, 1) << ","
+                    << vertices(i, 2) << ","
+                    << phi[i] << "\n";
+        }
+        sdf_file.close();
+        if (VERBOSE) std::cerr << "SDF file " << sdf_filename << " written successfully." << std::endl;
+    } else {
+        if (VERBOSE) std::cerr << "Could not export SDF file '" << sdf_filename << "'!" << std::endl;
+    }
+    
+    // Export mesh structure
+    exportMesh(options);
+    
+    if (VERBOSE) {
+        std::cout << "Complete export finished. Use these files in Python:" << std::endl;
+        std::cout << "  - SDF data: " << sdf_filename << std::endl;
+        std::cout << "  - Vertices: ../export/" + options.meshname + "_vertices.csv" << std::endl;
+        std::cout << "  - Tetrahedra: ../export/" + options.meshname + "_tets.csv" << std::endl;
+    }
+}
 
