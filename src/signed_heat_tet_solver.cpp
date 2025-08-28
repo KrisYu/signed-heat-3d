@@ -2021,78 +2021,107 @@ bool SignedHeatTetSolver::checkEdgesNeedRefinement(
         const double discriminant = 4*b*b - 12*a*c;
         double x_solution0 = -1;
         double x_solution1 = -1;
-        if( discriminant >= 0 ) {
-            x_solution0 = ( -2*b + std::sqrt(discriminant) ) / ( 6*a );
-            x_solution1 = ( -2*b - std::sqrt(discriminant) ) / ( 6*a );
+        
+        
+        if( discriminant >= 0 && std::abs(a) > 1e-12 ) {
+            double temp0 = ( -2*b + std::sqrt(discriminant) ) / ( 6*a );
+            double temp1 = ( -2*b - std::sqrt(discriminant) ) / ( 6*a );
             
-            bool solution0_valid = (x_solution0 > 0 && x_solution0 < x1);
-            bool solution1_valid = (x_solution1 > 0 && x_solution1 < x1);
+            // 只保留在边界内的解
+            if (temp0 > 0 && temp0 < x1) {
+                x_solution0 = temp0;
+            }
+            if (temp1 > 0 && temp1 < x1) {
+                x_solution1 = temp1;
+            }
+        }
+        
+        
+        if (x_solution0 >= 0 && x_solution1 >= 0) {
+            
+            const double f_solution0 = a*x_solution0*x_solution0*x_solution0 + b*x_solution0*x_solution0 + c*x_solution0 + d;
+            const double f_solution1 = a*x_solution1*x_solution1*x_solution1 + b*x_solution1*x_solution1 + c*x_solution1 + d;
+            
+            double f_solution_max = f_solution0;
+            double f_solution_min = f_solution1;
+            double x_solution_max = x_solution0;
+            double x_solution_min = x_solution1;
+            
+            if( f_solution0 < f_solution1 ) {
+                std::swap( f_solution_max, f_solution_min );
+                std::swap( x_solution_max, x_solution_min );
+            }
+        
+            
+//            std::cout << "Valid solutions found:" << std::endl;
+//            std::cout << "x_solution_max " << x_solution_max << std::endl;
+//            std::cout << "f_solution_max " << f_solution_max << std::endl;
+//            std::cout << "x_solution_min " << x_solution_min << std::endl;
+//            std::cout << "f_solution_min " << f_solution_min << std::endl;
+//            std::cout << "phi0 " << phi0 << std::endl;
+//            std::cout << "phi1 " << phi1 << std::endl;
+//            std::cout << "x1 " << x1 << std::endl;
+//            std::cout << "isovalue " << isovalue << std::endl;
+
+            
+            
+            
+            /// If phi0 and phi1 are both greater than the isovalue,
+            /// we split at the minimum quadratic formula solution
+            /// if it is within (x0,x1) and evaluates to less than the isovalue.
+            if(
+                ( phi0 > isovalue && phi1 > isovalue )
+                &&
+                ( x_solution_min > 0 && x_solution_min < x1 && f_solution_min < isovalue )
+            ) {
+                shouldSplit = true;
+                splitAt = x_solution_min/x1;
+                std::cout<<"greater than isovalue crossing" << std::endl;
+
+            }
+
+            /// If phi0 and phi1 are both less than the isovalue,
+            /// we split at the maximum quadratic formula solution
+            /// if it is within (x0,x1) and evaluates to greater than the isovalue.
+            if(
+                ( phi0 < isovalue && phi1 < isovalue )
+                &&
+                ( x_solution_max > 0 && x_solution_max < x1 && f_solution_max > isovalue )
+            ) {
+                shouldSplit = true;
+                splitAt = x_solution_max/x1;
+                std::cout<<"less than isovalue crossing" << std::endl;
+            }
+
+            if (phi0 == isovalue && phi1 == isovalue) {
+                if (f_solution_max > isovalue && f_solution_min < isovalue) {
+                    // double crossing detected
+                    shouldSplit = true;
+                    std::cout << "double crossing" << std::endl;
+                }
+            }
+            
+            if( shouldSplit )
+            {
+                // 两个端点都接近等值线，在中点插入顶点
+                EdgeRefinementInfo info;
+                info.v0Idx = v0Idx;
+                info.v1Idx = v1Idx;
+                
+                // 计算中点位置
+                Vector3 v0{vertices(v0Idx, 0), vertices(v0Idx, 1), vertices(v0Idx, 2)};
+                Vector3 v1{vertices(v1Idx, 0), vertices(v1Idx, 1), vertices(v1Idx, 2)};
+                info.newVertexPosition = v0 + (v1 - v0) * splitAt;
+                
+                edgesToRefine.push_back(info);
+                foundEdgesToRefine = true;
+            }
             
         }
         
-        const double f_solution0 = a*x_solution0*x_solution0*x_solution0 + b*x_solution0*x_solution0 + c*x_solution0 + d;
-        const double f_solution1 = a*x_solution1*x_solution1*x_solution1 + b*x_solution1*x_solution1 + c*x_solution1 + d;
-
-        double f_solution_max = f_solution0;
-        double f_solution_min = f_solution1;
-        double x_solution_max = x_solution0;
-        double x_solution_min = x_solution1;
-        if( f_solution0 > f_solution1 ) {
-            // Swap so that _max is the maximum and _min is the minimum.
-            std::swap( f_solution_max, f_solution_min );
-            std::swap( x_solution_max, x_solution_min );
-        }
-
-        std::cout<< "abcd " << abcd << std::endl;
-
-        std::cout << "x_solution_max " << x_solution_max << std::endl;
-        std::cout << "f_solution_max " << f_solution_max << std::endl;
         
-        std::cout << "x_solution_min " << x_solution_min << std::endl;
-        std::cout << "f_solution_min " << f_solution_min << std::endl;
-        
-        std::cout << std::endl;
+      
 
-
-        /// If phi0 and phi1 are both greater than the isovalue,
-        /// we split at the minimum quadratic formula solution
-        /// if it is within (x0,x1) and evaluates to less than the isovalue.
-        if(
-            ( phi0 > isovalue && phi1 > isovalue )
-            &&
-            ( x_solution_min > 0 && x_solution_min < x1 && f_solution_min < isovalue )
-        ) {
-            shouldSplit = true;
-            splitAt = x_solution_min/x1;
-        }
-
-        /// If phi0 and phi1 are both less than the isovalue,
-        /// we split at the maximum quadratic formula solution
-        /// if it is within (x0,x1) and evaluates to greater than the isovalue.
-        if(
-            ( phi0 < isovalue && phi1 < isovalue )
-            &&
-            ( x_solution_max > 0 && x_solution_max < x1 && f_solution_max > isovalue )
-        ) {
-            shouldSplit = true;
-            splitAt = x_solution_max/x1;
-        }
-
-        if( shouldSplit )
-        {
-            // 两个端点都接近等值线，在中点插入顶点
-            EdgeRefinementInfo info;
-            info.v0Idx = v0Idx;
-            info.v1Idx = v1Idx;
-            
-            // 计算中点位置
-            Vector3 v0{vertices(v0Idx, 0), vertices(v0Idx, 1), vertices(v0Idx, 2)};
-            Vector3 v1{vertices(v1Idx, 0), vertices(v1Idx, 1), vertices(v1Idx, 2)};
-            info.newVertexPosition = v0 + (v1 - v0) * splitAt;
-            
-            edgesToRefine.push_back(info);
-            foundEdgesToRefine = true;
-        }
     }
     
     std::cout << "Found " << edgesToRefine.size() << " edges that need midpoint insertion" << std::endl;
