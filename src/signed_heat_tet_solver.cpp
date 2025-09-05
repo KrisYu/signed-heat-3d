@@ -1545,8 +1545,12 @@ Vector<double> SignedHeatTetSolver::computeDistance(EdgeDualNormalGeometry& edge
                     // 提取新的约束点
                     std::vector<Vector3> extraPoints;
                     for (const auto& info : edgesToRefine) {
-                        extraPoints.push_back(info.newVertexPosition);
+                        for (const auto& p : info.newVertexPositions) {
+                            extraPoints.push_back(p);
+                        }
                     }
+                    
+                    std::cout << "refine again" << std::endl;
                     
                     // 重建包含新约束点的四面体网格
                     std::chrono::time_point<high_resolution_clock> refine_start = high_resolution_clock::now();
@@ -1604,7 +1608,7 @@ Vector<double> SignedHeatTetSolver::computeDistance(EdgeDualNormalGeometry& edge
         std::cout << "Final phi size: " << phi.size() << ", expected vertices: " << vertices.rows() << std::endl;
     }
     
-    exportDataAndMesh(phi, options);
+//    exportDataAndMesh(phi, options);
     return phi;
 }
 
@@ -1749,8 +1753,8 @@ void SignedHeatTetSolver::tetmeshEdgeGeo(EdgeDualNormalGeometry& edgeGeom,
     std::string EDGE_TET_PREFIX = "pq2.0Yfennna"; // q2.0 很宽松，不会破坏边
 
     double meanEdgeLength = calculateAverageEdgeLength(edgeGeom);
-    double targetArea = meanEdgeLength * meanEdgeLength;
-//    double targetArea = meanEdgeLength * meanEdgeLength * meanEdgeLength / 10;
+//    double targetArea = meanEdgeLength * meanEdgeLength;
+    double targetArea = meanEdgeLength * meanEdgeLength * meanEdgeLength ;
 
     std::string tetFlags = EDGE_TET_PREFIX + std::to_string(targetArea);
 
@@ -1928,7 +1932,6 @@ bool SignedHeatTetSolver::checkEdgesNeedRefinement(
     bool foundEdgesToRefine = false;
     double threshold = 0.1 * meanNodeSpacing;  // 可调参数：接近等值线的阈值
     
-    std::cout << "threshold " << threshold << std::endl;
     // 检查每条四面体边
     for (const auto& edge : uniqueEdges) {
         size_t v0Idx = edge.first;
@@ -1988,8 +1991,8 @@ bool SignedHeatTetSolver::checkEdgesNeedRefinement(
         const double f0 = phi0;
         const double f1 = phi1;
 
-        const double dfdx0 = dot( estimateNormalAtPoint( edgeGeom, lambda, eigenToGC( vertices.row(v0Idx)) ), eigenToGC(along ));
-        const double dfdx1 = dot( estimateNormalAtPoint( edgeGeom, lambda, eigenToGC( vertices.row(v1Idx)) ), eigenToGC( along ));
+        const double dfdx0 = -dot( estimateNormalAtPoint( edgeGeom, lambda, eigenToGC( vertices.row(v0Idx)) ), eigenToGC(along ));
+        const double dfdx1 = -dot( estimateNormalAtPoint( edgeGeom, lambda, eigenToGC( vertices.row(v1Idx)) ), eigenToGC( along ));
 
         /// Solve for a cubic polynomial for the line segment.
         // f(x) = ax^3 + bx^2 + cx + d
@@ -2052,7 +2055,7 @@ bool SignedHeatTetSolver::checkEdgesNeedRefinement(
                 std::swap( x_solution_max, x_solution_min );
             }
         
-            
+//
 //            std::cout << "Valid solutions found:" << std::endl;
 //            std::cout << "x_solution_max " << x_solution_max << std::endl;
 //            std::cout << "f_solution_max " << f_solution_max << std::endl;
@@ -2069,62 +2072,79 @@ bool SignedHeatTetSolver::checkEdgesNeedRefinement(
             /// If phi0 and phi1 are both greater than the isovalue,
             /// we split at the minimum quadratic formula solution
             /// if it is within (x0,x1) and evaluates to less than the isovalue.
-            if(
-                ( phi0 > isovalue && phi1 > isovalue )
-                &&
-                ( x_solution_min > 0 && x_solution_min < x1 && f_solution_min < isovalue )
-            ) {
+            if( phi0 > isovalue && phi1 > isovalue  && f_solution_min < isovalue ){
                 shouldSplit = true;
                 splitAt = x_solution_min/x1;
-                std::cout<<"greater than isovalue crossing" << std::endl;
+//                std::cout<<"greater than isovalue crossing" << std::endl;
+
+                EdgeRefinementInfo info;
+                info.v0Idx = v0Idx;
+                info.v1Idx = v1Idx;
+                
+                Vector3 v0{vertices(v0Idx, 0), vertices(v0Idx, 1), vertices(v0Idx, 2)};
+                Vector3 v1{vertices(v1Idx, 0), vertices(v1Idx, 1), vertices(v1Idx, 2)};
+                
+                info.newVertexPositions.push_back(v0 + (v1-v0) * splitAt);
+                edgesToRefine.push_back(info);
+                
+                foundEdgesToRefine = true;
 
             }
 
             /// If phi0 and phi1 are both less than the isovalue,
             /// we split at the maximum quadratic formula solution
             /// if it is within (x0,x1) and evaluates to greater than the isovalue.
-            if(
-                ( phi0 < isovalue && phi1 < isovalue )
-                &&
-                ( x_solution_max > 0 && x_solution_max < x1 && f_solution_max > isovalue )
-            ) {
+            if( phi0 < isovalue && phi1 < isovalue  && f_solution_max > isovalue ){
                 shouldSplit = true;
                 splitAt = x_solution_max/x1;
-                std::cout<<"less than isovalue crossing" << std::endl;
-            }
-
-            if (phi0 == isovalue && phi1 == isovalue) {
-                if (f_solution_max > isovalue && f_solution_min < isovalue) {
-                    // double crossing detected
-                    shouldSplit = true;
-                    std::cout << "double crossing" << std::endl;
-                }
-            }
-            
-            if( shouldSplit )
-            {
-                // 两个端点都接近等值线，在中点插入顶点
+                
+//                std::cout<<"less than isovalue crossing" << std::endl;
+                
                 EdgeRefinementInfo info;
                 info.v0Idx = v0Idx;
                 info.v1Idx = v1Idx;
                 
-                // 计算中点位置
                 Vector3 v0{vertices(v0Idx, 0), vertices(v0Idx, 1), vertices(v0Idx, 2)};
                 Vector3 v1{vertices(v1Idx, 0), vertices(v1Idx, 1), vertices(v1Idx, 2)};
-                info.newVertexPosition = v0 + (v1 - v0) * splitAt;
                 
+                info.newVertexPositions.push_back(v0 + (v1-v0) * splitAt);
                 edgesToRefine.push_back(info);
+                
                 foundEdgesToRefine = true;
+
             }
-            
+
+//            if (phi0 == isovalue && phi1 == isovalue && f_solution_max > isovalue && f_solution_min < isovalue)
+//            {
+//                    // double crossing detected
+//                    shouldSplit = true;
+////                    std::cout << "double crossing" << std::endl;
+//
+//                    EdgeRefinementInfo info;
+//                    info.v0Idx = v0Idx;
+//                    info.v1Idx = v1Idx;
+//
+//                    Vector3 v0{vertices(v0Idx, 0), vertices(v0Idx, 1), vertices(v0Idx, 2)};
+//                    Vector3 v1{vertices(v1Idx, 0), vertices(v1Idx, 1), vertices(v1Idx, 2)};
+//
+//                    info.newVertexPositions.push_back(v0 + (v1-v0) * x_solution_min / x1);
+//                    info.newVertexPositions.push_back(v0 + (v1-v0) * x_solution_max / x1);
+////                    info.newVertexPositions.push_back(v0 + (v1-v0) * 0.5);
+//
+//                    edgesToRefine.push_back(info);
+//                    foundEdgesToRefine = true;
+//
+//                }
         }
+        
+        
         
         
       
 
     }
     
-    std::cout << "Found " << edgesToRefine.size() << " edges that need midpoint insertion" << std::endl;
+    std::cout << "Found " << edgesToRefine.size() << " edges that need refinement" << std::endl;
     return foundEdgesToRefine;
 }
 

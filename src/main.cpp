@@ -82,7 +82,7 @@ bool VERBOSE = true;
 bool HEADLESS;
 bool CONTOURED = false;
 
-bool AUTO_EXPORT_ISOSURFACE = false;  // 自动保存
+bool AUTO_EXPORT_ISOSURFACE = true;  // 自动保存
 void contour();
 
 void solve() {

@@ -126,8 +126,8 @@ private:
     
     
     struct EdgeRefinementInfo {
-        size_t v0Idx, v1Idx;         // 四面体网格中两个顶点的索引
-        Vector3 newVertexPosition;   // 新顶点位置（中点）
+        size_t v0Idx, v1Idx;
+        std::vector<Vector3> newVertexPositions;
     };
     
     static Vector3 estimateNormalAtPoint( const EdgeDualNormalGeometry& edgeGeom, double lambda, const Vector3& q );
