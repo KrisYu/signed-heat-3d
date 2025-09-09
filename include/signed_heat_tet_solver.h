@@ -152,7 +152,6 @@ private:
     void exportData(const Vector<double>& phi, const SignedHeat3DOptions& options) const ;
     void exportMesh(const SignedHeat3DOptions& options) const;
     void exportDataAndMesh(const Vector<double>& phi, const SignedHeat3DOptions& options) const;
-    
-    
+    void visualizeWithProblematicEdges(const std::vector<EdgeRefinementInfo>& edgesToRefine);
 
 };
