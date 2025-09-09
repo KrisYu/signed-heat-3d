@@ -1754,7 +1754,7 @@ void SignedHeatTetSolver::tetmeshEdgeGeo(EdgeDualNormalGeometry& edgeGeom,
 
     double meanEdgeLength = calculateAverageEdgeLength(edgeGeom);
 //    double targetArea = meanEdgeLength * meanEdgeLength;
-    double targetArea = meanEdgeLength * meanEdgeLength * meanEdgeLength ;
+    double targetArea = meanEdgeLength * meanEdgeLength * meanEdgeLength;
 
     std::string tetFlags = EDGE_TET_PREFIX + std::to_string(targetArea);
 

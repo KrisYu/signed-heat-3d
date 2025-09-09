@@ -413,7 +413,8 @@ int main(int argc, char** argv) {
             
             // Resample the geometry to a target edge length
             float targetEdgeLength = 0.05f; // Set your desired edge length here
-            
+//            float targetEdgeLength = 0.04f; // Set your desired edge length here
+
             EdgeDualNormalGeometry resampledGeometry;
             if (resampleEdgeDualNormalGeometry(*edgeGeometry, resampledGeometry, targetEdgeLength)) {
                 // Replace the original geometry with the resampled one
