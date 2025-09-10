@@ -2288,17 +2288,17 @@ void SignedHeatTetSolver::visualizeWithProblematicEdges(const std::vector<EdgeRe
     curves->setColor({1.0, 0.0, 0.0});
     curves->setRadius(0.01);
     
-    
-    std::vector<Vector3> extraPoints;
-    for (const auto& info : edgesToRefine) {
-        extraPoints.push_back(info.newVertexPosition);
-    }
-    
-    
-    // 注册point cloud
-    auto* pointCloud = polyscope::registerPointCloud("split points", extraPoints);
-    pointCloud->setPointRadius(0.02);  // 比边粗一点，更显眼
-    pointCloud->setPointColor({0.0, 1.0, 0.0});  // 绿色
+//
+//    std::vector<Vector3> extraPoints;
+//    for (const auto& info : edgesToRefine) {
+//        extraPoints.push_back(info.newVertexPosition);
+//    }
+//
+//
+//    // 注册point cloud
+//    auto* pointCloud = polyscope::registerPointCloud("split points", extraPoints);
+//    pointCloud->setPointRadius(0.02);  // 比边粗一点，更显眼
+//    pointCloud->setPointColor({0.0, 1.0, 0.0});  // 绿色
     
     polyscope::show();
     
