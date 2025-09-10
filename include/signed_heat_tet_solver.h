@@ -127,7 +127,7 @@ private:
     
     struct EdgeRefinementInfo {
         size_t v0Idx, v1Idx;
-        std::vector<Vector3> newVertexPositions;
+        Vector3 newVertexPosition;
     };
     
     static Vector3 estimateNormalAtPoint( const EdgeDualNormalGeometry& edgeGeom, double lambda, const Vector3& q );

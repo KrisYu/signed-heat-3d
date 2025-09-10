@@ -2,6 +2,7 @@
 
 #include "polyscope/volume_mesh.h"
 #include "polyscope/curve_network.h"
+#include "polyscope/point_cloud.h"
 
 #include <unordered_map>
 
@@ -1548,15 +1549,24 @@ Vector<double> SignedHeatTetSolver::computeDistance(EdgeDualNormalGeometry& edge
                     // 提取新的约束点
                     std::vector<Vector3> extraPoints;
                     for (const auto& info : edgesToRefine) {
-                        for (const auto& p : info.newVertexPositions) {
-                            extraPoints.push_back(p);
-                        }
+                        extraPoints.push_back(info.newVertexPosition);
                     }
+
                     
                     std::cout << "refine again" << std::endl;
                     
                     // 重建包含新约束点的四面体网格
                     std::chrono::time_point<high_resolution_clock> refine_start = high_resolution_clock::now();
+                    
+                    
+                    // 注册point cloud
+                    auto* pointCloud = polyscope::registerPointCloud("extra points for tetgen", extraPoints);
+                    pointCloud->setPointRadius(0.02);  // 比边粗一点，更显眼
+                    pointCloud->setPointColor({0.0, 1.0, 0.0});  // 绿色
+                    
+                    polyscope::show();
+                    
+                    
                     
                     tetmeshEdgeGeo(edgeGeom, options, extraPoints);
                     
@@ -2078,20 +2088,6 @@ bool SignedHeatTetSolver::checkEdgesNeedRefinement(
             if( phi0 > isovalue && phi1 > isovalue  && f_solution_min < isovalue ){
                 shouldSplit = true;
                 splitAt = x_solution_min/x1;
-//                std::cout<<"greater than isovalue crossing" << std::endl;
-
-                EdgeRefinementInfo info;
-                info.v0Idx = v0Idx;
-                info.v1Idx = v1Idx;
-                
-                Vector3 v0{vertices(v0Idx, 0), vertices(v0Idx, 1), vertices(v0Idx, 2)};
-                Vector3 v1{vertices(v1Idx, 0), vertices(v1Idx, 1), vertices(v1Idx, 2)};
-                
-                info.newVertexPositions.push_back(v0 + (v1-v0) * splitAt);
-                edgesToRefine.push_back(info);
-                
-                foundEdgesToRefine = true;
-
             }
 
             /// If phi0 and phi1 are both less than the isovalue,
@@ -2100,8 +2096,10 @@ bool SignedHeatTetSolver::checkEdgesNeedRefinement(
             if( phi0 < isovalue && phi1 < isovalue  && f_solution_max > isovalue ){
                 shouldSplit = true;
                 splitAt = x_solution_max/x1;
-                
-//                std::cout<<"less than isovalue crossing" << std::endl;
+            }
+            
+            
+            if (shouldSplit) {
                 
                 EdgeRefinementInfo info;
                 info.v0Idx = v0Idx;
@@ -2110,34 +2108,13 @@ bool SignedHeatTetSolver::checkEdgesNeedRefinement(
                 Vector3 v0{vertices(v0Idx, 0), vertices(v0Idx, 1), vertices(v0Idx, 2)};
                 Vector3 v1{vertices(v1Idx, 0), vertices(v1Idx, 1), vertices(v1Idx, 2)};
                 
-                info.newVertexPositions.push_back(v0 + (v1-v0) * splitAt);
+                info.newVertexPosition = v0 + (v1-v0) * splitAt;
                 edgesToRefine.push_back(info);
                 
                 foundEdgesToRefine = true;
-
+                
             }
 
-//            if (phi0 == isovalue && phi1 == isovalue && f_solution_max > isovalue && f_solution_min < isovalue)
-//            {
-//                    // double crossing detected
-//                    shouldSplit = true;
-////                    std::cout << "double crossing" << std::endl;
-//
-//                    EdgeRefinementInfo info;
-//                    info.v0Idx = v0Idx;
-//                    info.v1Idx = v1Idx;
-//
-//                    Vector3 v0{vertices(v0Idx, 0), vertices(v0Idx, 1), vertices(v0Idx, 2)};
-//                    Vector3 v1{vertices(v1Idx, 0), vertices(v1Idx, 1), vertices(v1Idx, 2)};
-//
-//                    info.newVertexPositions.push_back(v0 + (v1-v0) * x_solution_min / x1);
-//                    info.newVertexPositions.push_back(v0 + (v1-v0) * x_solution_max / x1);
-////                    info.newVertexPositions.push_back(v0 + (v1-v0) * 0.5);
-//
-//                    edgesToRefine.push_back(info);
-//                    foundEdgesToRefine = true;
-//
-//                }
         }
         
         
@@ -2285,88 +2262,49 @@ void SignedHeatTetSolver::visualizeWithProblematicEdges(const std::vector<EdgeRe
     
     // show problematic edges
     
-//    std::vector<std::array<double, 3>> edgeVertices;
-//    std::vector<std::array<int, 2>> edgeIndices;
-//
-//    for (size_t i = 0; i < edgesToRefine.size(); i++) {
-//        const auto& edge = edgesToRefine[i];
-//
-//        Eigen::Vector3d v0 = vertices.row(edge.v0Idx);
-//        Eigen::Vector3d v1 = vertices.row(edge.v1Idx);
-//
-//        edgeVertices.push_back({v0[0], v0[1], v0[2]});
-//        edgeVertices.push_back({v1[0], v1[1], v1[2]});
-//
-//        edgeIndices.push_back({static_cast<int>(2*i), static_cast<int>(2*i+1)});
-//    }
-//
-//    auto* curves = polyscope::registerCurveNetwork("problematic edges",
-//                                                   edgeVertices, edgeIndices);
-//
-//    curves->setColor({1.0, 0.0, 0.0});
-//    curves->setRadius(0.01);
-//
-    
-    
-    
-    // show problematic tets
-    
-    
-    // 1. 找到所有problematic tets
-    std::set<int> problematicTets;
-    
-    for (const auto& edge : edgesToRefine) {
-        for (int i = 0; i < nTets; i++) {
-            bool hasV0 = false, hasV1 = false;
-            for (int j = 0; j < 4; j++) {
-                if (tets(i, j) == edge.v0Idx) hasV0 = true;
-                if (tets(i, j) == edge.v1Idx) hasV1 = true;
-            }
-            if (hasV0 && hasV1) {
-                problematicTets.insert(i);
-            }
-        }
-    }
-    
-    // 2. 为problematic tets的边创建独立的顶点和索引数组
     std::vector<std::array<double, 3>> edgeVertices;
     std::vector<std::array<int, 2>> edgeIndices;
+
+
     
-    int vertexCounter = 0;
-    
-    for (int tetIdx : problematicTets) {
-        // 每个四面体的6条边
-        std::vector<std::pair<int, int>> tetEdges = {
-            {tets(tetIdx, 0), tets(tetIdx, 1)}, {tets(tetIdx, 0), tets(tetIdx, 2)},
-            {tets(tetIdx, 0), tets(tetIdx, 3)}, {tets(tetIdx, 1), tets(tetIdx, 2)},
-            {tets(tetIdx, 1), tets(tetIdx, 3)}, {tets(tetIdx, 2), tets(tetIdx, 3)}
-        };
+    for (size_t i = 0; i < edgesToRefine.size(); i++) {
+        const auto& edge = edgesToRefine[i];
+
+        Eigen::Vector3d v0 = vertices.row(edge.v0Idx);
+        Eigen::Vector3d v1 = vertices.row(edge.v1Idx);
+
+        edgeVertices.push_back({v0[0], v0[1], v0[2]});
+        edgeVertices.push_back({v1[0], v1[1], v1[2]});
         
-        for (const auto& edge : tetEdges) {
-            // 添加边的两个端点
-            Eigen::Vector3d v0 = vertices.row(edge.first);
-            Eigen::Vector3d v1 = vertices.row(edge.second);
-            
-            edgeVertices.push_back({v0[0], v0[1], v0[2]});
-            edgeVertices.push_back({v1[0], v1[1], v1[2]});
-            
-            // 连接这两个点
-            edgeIndices.push_back({vertexCounter, vertexCounter + 1});
-            vertexCounter += 2;
-        }
+    
+        
+
+        edgeIndices.push_back({static_cast<int>(2*i), static_cast<int>(2*i+1)});
+    }
+
+    auto* curves = polyscope::registerCurveNetwork("problematic edges",
+                                                   edgeVertices, edgeIndices);
+
+    curves->setColor({1.0, 0.0, 0.0});
+    curves->setRadius(0.01);
+    
+    
+    std::vector<Vector3> extraPoints;
+    for (const auto& info : edgesToRefine) {
+        extraPoints.push_back(info.newVertexPosition);
     }
     
-    // 3. 注册和显示
-    auto* curves = polyscope::registerCurveNetwork("problematic tet edges",
-                                                   edgeVertices, edgeIndices);
     
-    curves->setColor({1.0, 0.0, 0.0});  // 红色
-    curves->setRadius(0.008);
-    
-    std::cout << "Found " << problematicTets.size() << " problematic tets with "
-              << edgeIndices.size() << " edges" << std::endl;
+    // 注册point cloud
+    auto* pointCloud = polyscope::registerPointCloud("split points", extraPoints);
+    pointCloud->setPointRadius(0.02);  // 比边粗一点，更显眼
+    pointCloud->setPointColor({0.0, 1.0, 0.0});  // 绿色
     
     polyscope::show();
+    
+    
+        
+
     
 }
 
