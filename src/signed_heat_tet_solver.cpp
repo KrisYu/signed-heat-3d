@@ -1538,6 +1538,9 @@ Vector<double> SignedHeatTetSolver::computeDistance(EdgeDualNormalGeometry& edge
             double isovalue = 0.0;
 
             if (checkEdgesNeedRefinement(edgeGeom, phi, lambda, isovalue, edgesToRefine)) {
+                
+                visualizeWithProblematicEdges(edgesToRefine);
+
                 // 只有在还有剩余迭代次数时才实际进行细分
                 if (iteration < maxIterations - 1) {
                     if (VERBOSE) {
@@ -1557,16 +1560,7 @@ Vector<double> SignedHeatTetSolver::computeDistance(EdgeDualNormalGeometry& edge
                     
                     // 重建包含新约束点的四面体网格
                     std::chrono::time_point<high_resolution_clock> refine_start = high_resolution_clock::now();
-                    
-                    
-                    // 注册point cloud
-                    auto* pointCloud = polyscope::registerPointCloud("extra points for tetgen", extraPoints);
-                    pointCloud->setPointRadius(0.02);  // 比边粗一点，更显眼
-                    pointCloud->setPointColor({0.0, 1.0, 0.0});  // 绿色
-                    
-                    polyscope::show();
-                    
-                    
+                                        
                     
                     tetmeshEdgeGeo(edgeGeom, options, extraPoints);
                     
@@ -2126,7 +2120,6 @@ bool SignedHeatTetSolver::checkEdgesNeedRefinement(
     
     std::cout << "Found " << edgesToRefine.size() << " edges that need refinement" << std::endl;
     
-    visualizeWithProblematicEdges(edgesToRefine);
 
     return foundEdgesToRefine;
 }
@@ -2288,17 +2281,17 @@ void SignedHeatTetSolver::visualizeWithProblematicEdges(const std::vector<EdgeRe
     curves->setColor({1.0, 0.0, 0.0});
     curves->setRadius(0.01);
     
-//
-//    std::vector<Vector3> extraPoints;
-//    for (const auto& info : edgesToRefine) {
-//        extraPoints.push_back(info.newVertexPosition);
-//    }
-//
-//
-//    // 注册point cloud
-//    auto* pointCloud = polyscope::registerPointCloud("split points", extraPoints);
-//    pointCloud->setPointRadius(0.02);  // 比边粗一点，更显眼
-//    pointCloud->setPointColor({0.0, 1.0, 0.0});  // 绿色
+
+    std::vector<Vector3> extraPoints;
+    for (const auto& info : edgesToRefine) {
+        extraPoints.push_back(info.newVertexPosition);
+    }
+
+
+    // 注册point cloud
+    auto* pointCloud = polyscope::registerPointCloud("split points", extraPoints);
+    pointCloud->setPointRadius(0.02);  // 比边粗一点，更显眼
+    pointCloud->setPointColor({0.0, 1.0, 0.0});  // 绿色
     
     polyscope::show();
     
