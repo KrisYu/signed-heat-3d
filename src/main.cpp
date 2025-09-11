@@ -47,6 +47,7 @@ std::unique_ptr<geometrycentral::EdgeDualNormalGeometry> edgeGeometry;
 
 // Contouring
 float ISOVAL = 0.;
+float ISOVAL_EPS = 0.;
 Vector<double> PHI;
 std::unique_ptr<SurfaceMesh> isoMesh;
 std::unique_ptr<VertexPositionGeometry> isoGeom;
@@ -189,7 +190,7 @@ void solve() {
 //            ISOVAL = 0.001;  // 设置为 0
 
             // 直接使用 tetSolver 生成等值面，无需依赖 polyscope
-            tetSolver->isosurface(isoMesh, isoGeom, PHI, ISOVAL);
+            tetSolver->isosurface(isoMesh, isoGeom, PHI, ISOVAL, ISOVAL_EPS);
             
             // 检查是否成功生成网格
             if (isoMesh && isoGeom) {
@@ -204,7 +205,7 @@ void solve() {
 
 void contour() {
     if (LAST_SOLVER_MODE == MeshMode::Tet) {
-        tetSolver->isosurface(isoMesh, isoGeom, PHI, ISOVAL);
+        tetSolver->isosurface(isoMesh, isoGeom, PHI, ISOVAL, ISOVAL_EPS);
         polyscope::registerSurfaceMesh("isosurface", isoGeom->vertexPositions, isoMesh->getFaceVertexList());
         
     } else {
@@ -268,6 +269,12 @@ void callback() {
         if (ImGui::InputFloat("Contour (enter value)", &ISOVAL)) {
             contour();
         }
+        if (ImGui::SliderFloat("Contour topological perturbation (drag slider)", &ISOVAL_EPS, -0.1, 0.1)) {
+            contour();
+        }
+        if (ImGui::InputFloat("Contour topological perturbation (enter value)", &ISOVAL_EPS)) {
+            contour();
+        }
         if (CONTOURED) {
             if (ImGui::Button("Export isosurface")) {
                 if (LAST_SOLVER_MODE == MeshMode::Grid) {
@@ -290,7 +297,7 @@ void callback() {
                     }
                     std::tie(isoMesh, isoGeom) = makeSurfaceMeshAndGeometry(polygons, positions);
                 }
-                std::string isoFilename = OUTPUT_DIR + "/isosurface.obj";
+                std::string isoFilename = OUTPUT_DIR + "/" + SHM_OPTIONS.meshname + "_isosurface.obj";
                 writeSurfaceMesh(*isoMesh, *isoGeom, isoFilename);
                 std::cerr << "Isosurface written to " << isoFilename << std::endl;
             }
@@ -412,8 +419,8 @@ int main(int argc, char** argv) {
             std::cout << "Loaded edge dual normal geometry" << std::endl;
             
             // Resample the geometry to a target edge length
-            float targetEdgeLength = 0.05f; // Set your desired edge length here
-//            float targetEdgeLength = 0.04f; // Set your desired edge length here
+//            float targetEdgeLength = 0.05f; // Set your desired edge length here
+            float targetEdgeLength = 0.04f; // Set your desired edge length here
 
             EdgeDualNormalGeometry resampledGeometry;
             if (resampleEdgeDualNormalGeometry(*edgeGeometry, resampledGeometry, targetEdgeLength)) {
