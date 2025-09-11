@@ -42,7 +42,6 @@ struct SignedHeat3DOptions {
     Vector3 bboxMax = {-1., -1., -1.};
     std::array<size_t, 3> resolution = {0, 0, 0};
     bool useCrouzeixRaviart = true;
-//    bool useCrouzeixRaviart = false;
     bool fastIntegration = false;
     bool exportData = false;
     std::string meshname;

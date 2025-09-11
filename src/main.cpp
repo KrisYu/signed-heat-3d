@@ -83,7 +83,7 @@ bool VERBOSE = true;
 bool HEADLESS;
 bool CONTOURED = false;
 
-bool AUTO_EXPORT_ISOSURFACE = true;  // 自动保存
+bool AUTO_EXPORT_ISOSURFACE = false;  // 自动保存
 void contour();
 
 void solve() {
@@ -374,6 +374,12 @@ int main(int argc, char** argv) {
     args::Flag verbose(group, "verbose", "Verbose output", {"V", "verbose"});
     args::Flag headless(group, "headless", "Don't use the GUI.", {"l", "headless"});
 
+    args::ValueFlag<double> targetEdgeLength(
+        parser, "targetEdgeLength", "Target edge length for normal file.", {"t"});
+    args::ValueFlag<std::string> outputDir(
+        parser, "outputDir", "Output directory for results.", {"o"});
+    
+    
     // Parse args
     try {
         parser.ParseCLI(argc, argv);
@@ -395,6 +401,7 @@ int main(int argc, char** argv) {
     std::string meshFilepath = args::get(meshFilename);
     MESH_MODE = grid ? MeshMode::Grid : MeshMode::Tet;
     OUTPUT_FILENAME = OUTPUT_DIR + "/GSD.obj";
+    OUTPUT_DIR = outputDir ? args::get(outputDir) : OUTPUT_DIR;   // 默认当前目录
     HEADLESS = headless;
     SHM_OPTIONS.exportData = headless; // always true if in headless mode
     SHM_OPTIONS.meshname = polyscope::guessNiceNameFromPath(meshFilepath);
@@ -419,11 +426,14 @@ int main(int argc, char** argv) {
             std::cout << "Loaded edge dual normal geometry" << std::endl;
             
             // Resample the geometry to a target edge length
-//            float targetEdgeLength = 0.05f; // Set your desired edge length here
-            float targetEdgeLength = 0.04f; // Set your desired edge length here
+            //            float targetEdgeLength = 0.05f; // Set your desired edge length here
+
+            float t = targetEdgeLength ? args::get(targetEdgeLength) : 0.05f; // 默认值 0.1
+
+            
 
             EdgeDualNormalGeometry resampledGeometry;
-            if (resampleEdgeDualNormalGeometry(*edgeGeometry, resampledGeometry, targetEdgeLength)) {
+            if (resampleEdgeDualNormalGeometry(*edgeGeometry, resampledGeometry, t)) {
                 // Replace the original geometry with the resampled one
                 *edgeGeometry = resampledGeometry;
                 std::cout << "Geometry resampled to target edge length: " << targetEdgeLength << std::endl;
