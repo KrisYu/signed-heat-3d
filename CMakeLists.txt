@@ -69,6 +69,10 @@ else()
   message( FATAL_ERROR "Unrecognized compiler [${CMAKE_CXX_COMPILER_ID}]" )
 endif()
 
+
+# added by Xue
+add_compile_definitions(NGC_SAFETY_CHECKS)
+
 # == Deps
 add_subdirectory(deps/geometry-central)
 add_subdirectory(deps/polyscope)

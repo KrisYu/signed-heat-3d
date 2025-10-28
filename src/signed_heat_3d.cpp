@@ -73,6 +73,44 @@ std::pair<Vector3, Vector3> computeBBox(pointcloud::PointPositionNormalGeometry&
     return std::make_pair(bboxMin, bboxMax);
 }
 
+
+
+std::pair<Vector3, Vector3> computeBBox(EdgeDualNormalGeometry& edgeGeom) {
+    const auto& vertices = edgeGeom.getVertices();
+    
+    if (vertices.empty()) {
+        return std::make_pair(Vector3{0, 0, 0}, Vector3{0, 0, 0});
+    }
+    
+    Vector3 minPoint = vertices[0];
+    Vector3 maxPoint = vertices[0];
+    
+    for (const auto& vertex : vertices) {
+        minPoint.x = std::min(minPoint.x, vertex.x);
+        minPoint.y = std::min(minPoint.y, vertex.y);
+        minPoint.z = std::min(minPoint.z, vertex.z);
+        
+        maxPoint.x = std::max(maxPoint.x, vertex.x);
+        maxPoint.y = std::max(maxPoint.y, vertex.y);
+        maxPoint.z = std::max(maxPoint.z, vertex.z);
+    }
+    
+    Vector3 center = (minPoint + maxPoint) * 0.5;
+    Vector3 diag = maxPoint - minPoint;
+    double radius = diag.norm() * 0.5;
+    
+    double s = 2.0 * radius;
+    
+    Vector3 bboxMin = center - Vector3{s, s, s};
+    Vector3 bboxMax = center + Vector3{s, s, s};
+    
+    return std::make_pair(bboxMin, bboxMax);
+}
+
+
+
+
+
 double yukawaPotential(const Vector3& x, const Vector3& y, const double& lambda) {
 
     double r = (x - y).norm();

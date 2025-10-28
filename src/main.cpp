@@ -64,7 +64,7 @@ polyscope::PointCloud* psEdgeMidpoints;
 
 // Solvers & parameters
 float TCOEF = 1.0;
-std::array<int, 3> RESOLUTION = {16, 16, 16};
+std::array<int, 3> RESOLUTION = {64, 64, 64};
 std::unique_ptr<SignedHeatTetSolver> tetSolver;
 std::unique_ptr<SignedHeatGridSolver> gridSolver;
 SignedHeat3DOptions SHM_OPTIONS;
@@ -76,7 +76,7 @@ enum InputMode { Mesh = 0, Points, EdgeNormals };
 int MESH_MODE = MeshMode::Tet;
 int INPUT_MODE = InputMode::Mesh;
 std::string MESHNAME = "input mesh";
-std::string OUTPUT_DIR = "../export";
+std::string OUTPUT_DIR = "./";
 std::string OUTPUT_FILENAME;
 int LAST_SOLVER_MODE = MESH_MODE;
 bool VERBOSE = true;
@@ -96,10 +96,6 @@ void solve() {
     if (MESH_MODE == MeshMode::Tet) {
         if (VERBOSE) std::cerr << "\nSolving on tet mesh..." << std::endl;
         t1 = high_resolution_clock::now();
-        
-        //        PHI = (INPUT_MODE == InputMode::Mesh) ? tetSolver->computeDistance(*geometry, SHM_OPTIONS)
-        //                                              : tetSolver->computeDistance(*pointGeom, SHM_OPTIONS);
-        
         if (INPUT_MODE == InputMode::Mesh) {
             PHI = tetSolver->computeDistance(*geometry, SHM_OPTIONS);
         } else if (INPUT_MODE == InputMode::EdgeNormals) {
@@ -126,8 +122,16 @@ void solve() {
         }
     } else if (MESH_MODE == MeshMode::Grid) {
         t1 = high_resolution_clock::now();
-        PHI = (INPUT_MODE == InputMode::Mesh) ? gridSolver->computeDistance(*geometry, SHM_OPTIONS)
-        : gridSolver->computeDistance(*pointGeom, SHM_OPTIONS);
+        if (INPUT_MODE == InputMode::Mesh) {
+            PHI = gridSolver->computeDistance(*geometry, SHM_OPTIONS);
+        } else if (INPUT_MODE == InputMode::EdgeNormals) {
+            std::cout << "Using Grid version " << std::endl;
+            PHI = gridSolver->computeDistance(*edgeGeometry, SHM_OPTIONS);
+        } else {
+            PHI = gridSolver->computeDistance(*pointGeom, SHM_OPTIONS);
+        }
+
+        
         t2 = high_resolution_clock::now();
         ms_fp = t2 - t1;
         if (VERBOSE) std::cerr << "Solve time (s): " << ms_fp.count() / 1000. << std::endl;
@@ -183,15 +187,22 @@ void solve() {
     {
         // 自动生成和导出 contour = 0 的 isosurface
         if (PHI.size() > 0) {
-
-            ISOVAL = 0.0;  // 设置为 0
-//            ISOVAL = 0.00001;  // 设置为 0
-//            ISOVAL = 0.0001;  // 设置为 0
-//            ISOVAL = 0.001;  // 设置为 0
-
-            // 直接使用 tetSolver 生成等值面，无需依赖 polyscope
-            tetSolver->isosurface(isoMesh, isoGeom, PHI, ISOVAL, ISOVAL_EPS);
+            ISOVAL = 0.0;
             
+            if (MESH_MODE == Tet) {
+                tetSolver->isosurface(isoMesh, isoGeom, PHI, ISOVAL, ISOVAL_EPS);
+            }
+            else
+            {
+                
+                gridScalarQ->setIsosurfaceLevel(ISOVAL);
+                gridScalarQ->setIsosurfaceVizEnabled(true);
+                gridScalarQ->setSlicePlanesAffectIsosurface(false);
+                gridScalarQ->registerIsosurfaceAsMesh("isosurface");
+                
+            }
+                
+       
             // 检查是否成功生成网格
             if (isoMesh && isoGeom) {
                 std::string isoFilename = OUTPUT_DIR + "/" + SHM_OPTIONS.meshname + "_isosurface.obj";
@@ -236,8 +247,8 @@ void callback() {
         ImGui::Checkbox("Use Crouzeix-Raviart", &SHM_OPTIONS.useCrouzeixRaviart);
     }
     ImGui::InputFloat("tCoef (diffusion time)", &TCOEF);
-
-    // 应该只有 grid 改变 Resolution 才有影响吧
+    
+    // Change the grid resolution and rebuild
     if (MESH_MODE == MeshMode::Grid) {
         // Resolution
         if (ImGui::InputInt("Resolution (x-axis)", &RESOLUTION[0])) {
@@ -410,9 +421,20 @@ int main(int argc, char** argv) {
     // Get file extension.
     std::string ext = meshFilepath.substr(meshFilepath.find_last_of(".") + 1);
     pointcloud::PointData<Vector3> pointPositions;
-    if (ext != "pc" and ext != "normal") {
-        std::tie(mesh, geometry) = readSurfaceMesh(meshFilepath);
-        INPUT_MODE = InputMode::Mesh;
+    if (ext == "pc" ) {
+        std::vector<Vector3> positions, normals;
+        std::tie(positions, normals) = readPointCloud(meshFilepath);
+        size_t nPts = positions.size();
+        cloud = std::unique_ptr<pointcloud::PointCloud>(new pointcloud::PointCloud(nPts));
+        pointPositions = pointcloud::PointData<Vector3>(*cloud);
+        pointcloud::PointData<Vector3> pointNormals = pointcloud::PointData<Vector3>(*cloud);
+        for (size_t i = 0; i < nPts; i++) {
+            pointPositions[i] = positions[i];
+            pointNormals[i] = normals[i];
+        }
+        pointGeom = std::unique_ptr<pointcloud::PointPositionNormalGeometry>(
+                                                                             new pointcloud::PointPositionNormalGeometry(*cloud, pointPositions, pointNormals));
+        INPUT_MODE = InputMode::Points;
     } else if (ext == "normal"){
         
         // Handle .normal files with edge dual normals
@@ -422,40 +444,27 @@ int main(int argc, char** argv) {
                                                                                 new geometrycentral::EdgeDualNormalGeometry());
         
         if (readEdgeDualNormal(meshFilepath, *edgeGeometry)) {
-            INPUT_MODE = InputMode::EdgeNormals;
             std::cout << "Loaded edge dual normal geometry" << std::endl;
             
-            // Resample the geometry to a target edge length
-            //            float targetEdgeLength = 0.05f; // Set your desired edge length here
-
-            float t = targetEdgeLength ? args::get(targetEdgeLength) : 0.05f; // 默认值 0.1
-
+            float t = targetEdgeLength ? args::get(targetEdgeLength) : 0.04f; // default 0.04
             
-
             EdgeDualNormalGeometry resampledGeometry;
             if (resampleEdgeDualNormalGeometry(*edgeGeometry, resampledGeometry, t)) {
                 // Replace the original geometry with the resampled one
                 *edgeGeometry = resampledGeometry;
-                std::cout << "Geometry resampled to target edge length: " << targetEdgeLength << std::endl;
+                //snapNormals(*edgeGeometry, 179.0f);
+                //snapAndExpandNormals(*edgeGeometry, 10.0, 7.5f);
+                std::cout << "Geometry resampled to target edge length: " << t << std::endl;
             } else {
                 std::cout << "Warning: Resampling failed, using original geometry" << std::endl;
             }
-        } else {
-            std::vector<Vector3> positions, normals;
-            std::tie(positions, normals) = readPointCloud(meshFilepath);
-            size_t nPts = positions.size();
-            cloud = std::unique_ptr<pointcloud::PointCloud>(new pointcloud::PointCloud(nPts));
-            pointPositions = pointcloud::PointData<Vector3>(*cloud);
-            pointcloud::PointData<Vector3> pointNormals = pointcloud::PointData<Vector3>(*cloud);
-            for (size_t i = 0; i < nPts; i++) {
-                pointPositions[i] = positions[i];
-                pointNormals[i] = normals[i];
-            }
-            pointGeom = std::unique_ptr<pointcloud::PointPositionNormalGeometry>(
-                                                                                 new pointcloud::PointPositionNormalGeometry(*cloud, pointPositions, pointNormals));
-            INPUT_MODE = InputMode::Points;
         }
+        INPUT_MODE = InputMode::EdgeNormals;
+    } else if (ext != "pc" and ext != "normal") {
+        std::tie(mesh, geometry) = readSurfaceMesh(meshFilepath);
+        INPUT_MODE = InputMode::Mesh;
     }
+    
     tetSolver = std::unique_ptr<SignedHeatTetSolver>(new SignedHeatTetSolver());
     gridSolver = std::unique_ptr<SignedHeatGridSolver>(new SignedHeatGridSolver());
     tetSolver->VERBOSE = verbose;

@@ -1,4 +1,5 @@
 #include "signed_heat_grid_solver.h"
+#include "edge_dual_normal_geometry.h"
 
 SignedHeatGridSolver::SignedHeatGridSolver() {}
 
@@ -234,6 +235,236 @@ Vector<double> SignedHeatGridSolver::computeDistance(pointcloud::PointPositionNo
     if (options.exportData) exportData(phi, options);
     return phi;
 }
+
+
+
+// Marching cube on EdgeDualNormalGeometry
+Vector<double> SignedHeatGridSolver::computeDistance(EdgeDualNormalGeometry& edgeGeom,
+                                                     const SignedHeat3DOptions& options) {
+
+    std::cout << "EdgeDualNormalGeometry on Grid " << std::endl;
+
+    if (options.rebuild) {
+        if (VERBOSE) std::cerr << "Building grid..." << std::endl;
+        std::chrono::time_point<high_resolution_clock> t1, t2;
+        std::chrono::duration<double, std::milli> ms_fp;
+        t1 = high_resolution_clock::now();
+        if (!isBoundingBoxValid(options.bboxMin, options.bboxMax)) {
+            std::tie(bboxMin, bboxMax) = computeBBox(edgeGeom);
+        } else {
+            bboxMin = options.bboxMin;
+            bboxMax = options.bboxMax;
+        }
+        if (isResolutionValid(options.resolution)) resolution = options.resolution;
+        Vector3 diag = bboxMax - bboxMin;
+        for (int i = 0; i < 3; i++) cellSizes[i] = diag[i] / (resolution[i] - 1);
+        
+        std::cout << "cellSizes " << cellSizes << std::endl;
+        
+        if (VERBOSE) std::cerr << "Building Laplacian..." << std::endl;
+        laplaceMat = laplacian();
+        t2 = high_resolution_clock::now();
+        ms_fp = t2 - t1;
+        if (VERBOSE) std::cerr << "Pre-compute time (s): " << ms_fp.count() / 1000. << std::endl;
+    }
+    
+    // Resample to use of points :
+    //  resample points rate: 0.01
+    //  remove duplicates when resampling
+    //  actually a point can have more than 2 normals, but here just overwrite the points normals
+    const auto& originalVertices = edgeGeom.getVertices();
+    const auto& originalEdges = edgeGeom.getEdges();
+    const auto& originalNormals1 = edgeGeom.getNormals1();
+    const auto& originalNormals2 = edgeGeom.getNormals2();
+
+    std::vector<Vector3> sampledPoints;
+    std::vector<Vector3> sampledNormals1;
+    std::vector<Vector3> sampledNormals2;
+
+    double resamplePointsRate = 0.01f;
+    std::set<std::tuple<double, double, double>> uniquePoints;
+
+    for (size_t edgeIdx = 0; edgeIdx < originalEdges.size(); ++edgeIdx) {
+        const auto& edge = originalEdges[edgeIdx];
+        Vector3 v0 = originalVertices[edge.first];
+        Vector3 v1 = originalVertices[edge.second];
+        Vector3 n1 = originalNormals1[edgeIdx];
+        Vector3 n2 = originalNormals2[edgeIdx];
+
+        double edgeLength = (v1 - v0).norm();
+        int numSamples = std::max(2, (int)std::ceil(edgeLength / resamplePointsRate));
+
+        
+        for (int i = 0; i < numSamples; ++i) {
+            double t = (double)i / (numSamples - 1);
+            Vector3 sampledPoint = v0 + t * (v1 - v0);
+
+            auto key = std::make_tuple(
+                std::round(sampledPoint.x * 1e6) / 1e6,
+                std::round(sampledPoint.y * 1e6) / 1e6,
+                std::round(sampledPoint.z * 1e6) / 1e6
+            );
+
+            if (uniquePoints.insert(key).second) {
+                sampledPoints.push_back(sampledPoint);
+                sampledNormals1.push_back(n1);
+                sampledNormals2.push_back(n2);
+            }
+        }
+    }
+
+    std::cout << "Simple resampling: " << originalVertices.size()
+              << " vertices -> " << sampledPoints.size() << " points" << std::endl;
+
+    VERBOSE = true;
+
+
+
+    // Create point cloud for tuftedTriangulation
+    size_t nPts = sampledPoints.size();
+    std::unique_ptr<pointcloud::PointCloud> cloud(new pointcloud::PointCloud(nPts));
+    pointcloud::PointData<Vector3> pointPositions(*cloud);
+    pointcloud::PointData<Vector3> pointNormals(*cloud);
+
+    for (size_t i = 0; i < nPts; i++) {
+        pointPositions[i] = sampledPoints[i];
+        pointNormals[i] = sampledNormals1[i];
+    }
+
+    std::unique_ptr<pointcloud::PointPositionNormalGeometry> pointGeom(
+        new pointcloud::PointPositionNormalGeometry(*cloud, pointPositions, pointNormals));
+
+
+    if (VERBOSE) std::cerr << "Steps 1 & 2..." << std::endl;
+    pointGeom->requireTuftedTriangulation();
+    pointGeom->tuftedGeom->requireVertexDualAreas();
+
+    double h = meanEdgeLength(*(pointGeom->tuftedGeom));
+    shortTime = options.tCoef * h * h;
+    double lambda = std::sqrt(1. / shortTime);
+    size_t totalNodes = resolution[0] * resolution[1] * resolution[2];
+    Eigen::VectorXd Y = Eigen::VectorXd::Zero(3 * totalNodes);
+    size_t P = nPts;
+
+    for (size_t i = 0; i < resolution[0]; i++) {
+        for (size_t j = 0; j < resolution[1]; j++) {
+            for (size_t k = 0; k < resolution[2]; k++) {
+
+                size_t idx = indicesToNodeIndex(i, j, k);
+                Vector3 q = indicesToNodePosition(i, j, k);
+
+                for (size_t pIdx = 0; pIdx < P; pIdx++) {
+                    Vector3 p = sampledPoints[pIdx];
+                    Vector3 n = sampledNormals1[pIdx];
+                    Vector3 n_prime = sampledNormals2[pIdx];
+                    double A = pointGeom->tuftedGeom->vertexDualAreas[pIdx];
+
+                    Vector3 direction = q - p;
+
+                    double dot1 = dot(direction, n);
+                    double dot2 = dot(direction, n_prime);
+
+                    Vector3 normalToUse;
+
+                    if (dot1 > 0 && dot2 < 0) {
+                        normalToUse = n;
+                    } else if (dot1 < 0 && dot2 > 0) {
+                        normalToUse = n_prime;
+                    } else if (dot1 > 0 && dot2 > 0) {
+                        Vector3 bisector = (n_prime + n) / 2.0;
+                        bisector = bisector.normalize();
+
+                        double dot_bisector = dot(direction, bisector);
+
+                        if (dot_bisector > dot1 && dot_bisector > dot2) {
+                            normalToUse = direction.normalize();
+                        } else if (dot1 < dot2) {
+                            normalToUse = n_prime;
+                        } else {
+                            normalToUse = n;
+                        }
+                    } else {
+                        if (dot1 > dot2) {
+                            normalToUse = n;
+                        } else {
+                            normalToUse = n_prime;
+                        }
+                    }
+
+                    Vector3 source = normalToUse * A * yukawaPotential(p, q, lambda);
+                    for (int d = 0; d < 3; d++) {
+                        Y(3 * idx + d) += source[d];
+                    }
+                }
+                
+
+                Vector3 X = {Y(3 * idx + 0), Y(3 * idx + 1), Y(3 * idx + 2)};
+                X /= X.norm();
+                for (int p = 0; p < 3; p++) {
+                    Y(3 * idx + p) = X[p];
+                }
+            }
+        }
+    }
+    if (VERBOSE) std::cerr << "\tCompleted." << std::endl;
+
+    if (VERBOSE) std::cerr << "Step 3..." << std::endl;
+    SparseMatrix<double> D = gradient();
+    Vector<double> divYt = D.transpose() * Y;
+    Vector<double> phi;
+
+    if (options.fastIntegration) {
+        phi = integrateGreedily(Y);
+    } else {
+        SparseMatrix<double> A;
+        size_t m = 0;
+        std::vector<size_t> nodeIndices;
+        std::vector<double> coeffs;
+        std::vector<bool> hasCellBeenUsed(totalNodes, false);
+        std::vector<Eigen::Triplet<double>> tripletList;
+        for (size_t pIdx = 0; pIdx < P; pIdx++) {
+            Vector3 b = sampledPoints[pIdx];
+            Vector3 d = b - bboxMin;
+            size_t i = std::floor(d[0] / cellSizes[0]);
+            size_t j = std::floor(d[1] / cellSizes[1]);
+            size_t k = std::floor(d[2] / cellSizes[2]);
+            size_t nodeIdx = indicesToNodeIndex(i, j, k);
+            if (hasCellBeenUsed[nodeIdx]) continue;
+            trilinearCoefficients(b, nodeIndices, coeffs);
+            for (size_t i = 0; i < nodeIndices.size(); i++) tripletList.emplace_back(m, nodeIndices[i], coeffs[i]);
+            hasCellBeenUsed[nodeIdx] = true;
+            m++;
+        }
+        A.resize(m, totalNodes);
+        A.setFromTriplets(tripletList.begin(), tripletList.end());
+        SparseMatrix<double> Z(m, m);
+        SparseMatrix<double> LHS1 = horizontalStack<double>({laplaceMat, A.transpose()});
+        SparseMatrix<double> LHS2 = horizontalStack<double>({A, Z});
+        SparseMatrix<double> LHS = verticalStack<double>({LHS1, LHS2});
+        Vector<double> RHS = Vector<double>::Zero(totalNodes + m);
+        RHS.head(totalNodes) = divYt;
+        // clang-format off
+        #ifndef SHM_NO_AMGCL
+        Vector<double> soln = AMGCL_solve(LHS, RHS, VERBOSE);
+        #else
+        Vector<double> soln = solveSquare(LHS, RHS);
+        #endif
+        // clang-format on
+        phi = -soln.head(totalNodes);
+    }
+
+    double shift = evaluateAverageAlongSourceGeometry(*pointGeom, phi);
+    phi -= shift * Vector<double>::Ones(totalNodes);
+    if (VERBOSE) std::cerr << "\tCompleted." << std::endl;
+    pointGeom->unrequireTuftedTriangulation();
+    pointGeom->tuftedGeom->unrequireVertexDualAreas();
+    if (options.exportData) exportData(phi, options);
+    return phi;
+}
+
+
+
+
 
 Vector<double> SignedHeatGridSolver::integrateGreedily(const Eigen::VectorXd& Yt) {
 
