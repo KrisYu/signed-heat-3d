@@ -398,6 +398,7 @@ Vector<double> SignedHeatTetSolver::integrateVectorField(pointcloud::PointPositi
             break;
         }
         case (LevelSetConstraint::ZeroSet): {
+            std::cout << "break point " << std::endl;
             Vector<double> div = vertexDivergence(Yt);
             size_t P = pointGeom.cloud.nPoints();
             Vector<bool> setAMembership = Vector<bool>::Ones(nVertices);
@@ -410,7 +411,8 @@ Vector<double> SignedHeatTetSolver::integrateVectorField(pointcloud::PointPositi
             Vector<double> combinedRHS = rhsValsA;
             // clang-format off
             #ifndef SHM_NO_AMGCL
-            Vector<double> Aresult = AMGCL_solve(decomp.AA, combinedRHS, VERBOSE);
+//            #if 0
+            Vector<double> Aresult = AMGCL_solve(decomp.AA, combinedRHS, VERBOSE = true);
             #else
             Vector<double> Aresult = solvePositiveDefinite(decomp.AA, combinedRHS);
             #endif
@@ -886,7 +888,7 @@ SparseMatrix<double> SignedHeatTetSolver::buildAveragingMatrix() const {
 void SignedHeatTetSolver::isosurface(std::unique_ptr<SurfaceMesh>& isoMesh,
                                      std::unique_ptr<VertexPositionGeometry>& isoGeom, const Vector<double>& phi,
                                      double isoval, double isoval_eps) const {
-
+    
     Eigen::MatrixXd SV;
     Eigen::MatrixXi SF;
     Eigen::VectorXi J;
@@ -1436,17 +1438,22 @@ double SignedHeatTetSolver::computeMeanNodeSpacing() const {
 Vector<double> SignedHeatTetSolver::computeDistance(EdgeDualNormalGeometry& edgeGeom,
                                                     const SignedHeat3DOptions& options) {
     
+    
+
     bool VERBOSE = true;
+    
     
     std::cout << "SignedHeatTetSolver with dual normals per edge" << std::endl;
 
+    std::chrono::time_point<high_resolution_clock> t1, t2;
+    std::chrono::duration<double, std::milli> ms_fp;
+    t1 = high_resolution_clock::now();
+    if (VERBOSE) std::cerr << "Building initial tet mesh..." << std::endl;
+    
+    
     // 初始网格构建（如果需要）
     if (options.rebuild || vertices.size() == 0) {
-        std::chrono::time_point<high_resolution_clock> t1, t2;
-        std::chrono::duration<double, std::milli> ms_fp;
-        t1 = high_resolution_clock::now();
-        if (VERBOSE) std::cerr << "Building initial tet mesh..." << std::endl;
-        
+      
         // Calculate mean edge length for area scaling
         double meanEdgeLength = calculateAverageEdgeLength(edgeGeom);
         double targetArea = meanEdgeLength * meanEdgeLength;
@@ -1461,6 +1468,7 @@ Vector<double> SignedHeatTetSolver::computeDistance(EdgeDualNormalGeometry& edge
         for (size_t i = 0; i < nPts; i++) {
             pointPositions[i] = vertices_data[i];
         }
+        
         pointPolyGeom = std::unique_ptr<pointcloud::PointPositionGeometry>(
             new pointcloud::PointPositionGeometry(*cloud, pointPositions));
         
@@ -1470,14 +1478,21 @@ Vector<double> SignedHeatTetSolver::computeDistance(EdgeDualNormalGeometry& edge
         
         if (VERBOSE) std::cerr << "Computing initial tet mesh data..." << std::endl;
         meanNodeSpacing = computeMeanNodeSpacing();
-        shortTime = options.tCoef * meanNodeSpacing * meanNodeSpacing;
-        tetVolumes = computeTetVolumes();
-        laplaceMat = dualLaplacian();
         
-        t2 = high_resolution_clock::now();
-        ms_fp = t2 - t1;
-        if (VERBOSE) std::cerr << "Initial mesh build time (s): " << ms_fp.count() / 1000. << std::endl;
     }
+    
+    shortTime = options.tCoef * meanNodeSpacing * meanNodeSpacing;
+    
+    std::cout << "tCoef " << options.tCoef << " shortTime " << shortTime << std::endl;
+    
+    tetVolumes = computeTetVolumes();
+    laplaceMat = dualLaplacian();
+    
+    t2 = high_resolution_clock::now();
+    ms_fp = t2 - t1;
+    if (VERBOSE) std::cerr << "Initial mesh build time (s): " << ms_fp.count() / 1000. << std::endl;
+    
+
 
     // 主计算循环
     int maxIterations = 1;  // 你可以随意修改这个值
@@ -1538,9 +1553,15 @@ Vector<double> SignedHeatTetSolver::computeDistance(EdgeDualNormalGeometry& edge
             std::vector<EdgeRefinementInfo> edgesToRefine;
             double isovalue = 0.0;
 
-            if (checkEdgesNeedRefinement(edgeGeom, phi, lambda, isovalue, edgesToRefine)) {
+//            if (checkEdgesNeedRefinement(edgeGeom, phi, lambda, isovalue, edgesToRefine)) {
+            if (true) {
+
+//                if (!HEADLESS)
+//                {
+//                    visualizeWithProblematicEdges(edgesToRefine);
+//                }
                 
-                visualizeWithProblematicEdges(edgesToRefine);
+                
 
                 // 只有在还有剩余迭代次数时才实际进行细分
                 if (iteration < maxIterations - 1) {
@@ -1615,8 +1636,7 @@ Vector<double> SignedHeatTetSolver::computeDistance(EdgeDualNormalGeometry& edge
         std::cout << std::endl;
         std::cout << "Final phi size: " << phi.size() << ", expected vertices: " << vertices.rows() << std::endl;
     }
-    
-//    exportDataAndMesh(phi, options);
+    exportDataAndMesh(phi, options);
     return phi;
 }
 
@@ -1816,6 +1836,9 @@ Vector3 SignedHeatTetSolver::estimateNormalAtPoint( const EdgeDualNormalGeometry
         
         // Direction from edge midpoint to query point
         Vector3 direction = q - p;
+        Vector3 edgedir= v1 - v0;
+        edgedir = edgedir.normalize();
+        direction -= dot(direction, edgedir) * edgedir;
         
         // Calculate dot products to determine which side of each plane the query point is on
         double dot1 = dot(direction, n);
@@ -1835,7 +1858,6 @@ Vector3 SignedHeatTetSolver::estimateNormalAtPoint( const EdgeDualNormalGeometry
             
             double dot_bisector = dot(direction, bisector);
             assert(dot_bisector > 0);
-            
             if (dot_bisector > dot1 && dot_bisector > dot2) {
                 normalToUse = direction.normalize();
             } else if (dot1 < dot2) {
@@ -2109,19 +2131,10 @@ bool SignedHeatTetSolver::checkEdgesNeedRefinement(
                 foundEdgesToRefine = true;
                 
             }
-
         }
-        
-        
-        
-        
-      
-
     }
     
     std::cout << "Found " << edgesToRefine.size() << " edges that need refinement" << std::endl;
-    
-
     return foundEdgesToRefine;
 }
 
@@ -2136,7 +2149,7 @@ bool SignedHeatTetSolver::checkEdgesNeedRefinement(
 void SignedHeatTetSolver::exportData(const Vector<double>& phi, const SignedHeat3DOptions& options) const {
     
 
-    std::string filename = "../export/" + options.meshname + "_tet.csv";
+    std::string filename = "./" + options.meshname + "_tet.csv";
     std::fstream f;
     f.open(filename, std::ios::out | std::ios::trunc);
     
@@ -2168,7 +2181,7 @@ void SignedHeatTetSolver::exportData(const Vector<double>& phi, const SignedHeat
 void SignedHeatTetSolver::exportMesh(const SignedHeat3DOptions& options) const {
     
     // Export vertices
-    std::string vertices_filename = "../export/" + options.meshname + "_vertices.csv";
+    std::string vertices_filename = "./" + options.meshname + "_vertices.csv";
     std::fstream vertices_file;
     vertices_file.open(vertices_filename, std::ios::out | std::ios::trunc);
     
@@ -2186,7 +2199,7 @@ void SignedHeatTetSolver::exportMesh(const SignedHeat3DOptions& options) const {
     }
     
     // Export tetrahedra
-    std::string tets_filename = "../export/" + options.meshname + "_tets.csv";
+    std::string tets_filename = "./" + options.meshname + "_tets.csv";
     std::fstream tets_file;
     tets_file.open(tets_filename, std::ios::out | std::ios::trunc);
     
@@ -2219,7 +2232,7 @@ void SignedHeatTetSolver::exportMesh(const SignedHeat3DOptions& options) const {
 void SignedHeatTetSolver::exportDataAndMesh(const Vector<double>& phi, const SignedHeat3DOptions& options) const {
     
     // Export SDF data (original function)
-    std::string sdf_filename = "../export/" + options.meshname + "_sdf.csv";
+    std::string sdf_filename = "./" + options.meshname + "_sdf.csv";
     std::fstream sdf_file;
     sdf_file.open(sdf_filename, std::ios::out | std::ios::trunc);
     

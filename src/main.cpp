@@ -166,7 +166,6 @@ void solve() {
         if (INPUT_MODE == InputMode::Mesh) {
             psMesh->setIgnoreSlicePlane(psPlane->name, true);
         } else if (INPUT_MODE == InputMode::EdgeNormals) {
-           // 让所有 edge normal 相关的可视化忽略 slice plane
            psCloud->setIgnoreSlicePlane(psPlane->name, true);
            if (psCurves)
            {
@@ -203,7 +202,6 @@ void solve() {
             }
                 
        
-            // 检查是否成功生成网格
             if (isoMesh && isoGeom) {
                 std::string isoFilename = OUTPUT_DIR + "/" + SHM_OPTIONS.meshname + "_isosurface.obj";
                 writeSurfaceMesh(*isoMesh, *isoGeom, isoFilename);
@@ -412,7 +410,7 @@ int main(int argc, char** argv) {
     std::string meshFilepath = args::get(meshFilename);
     MESH_MODE = grid ? MeshMode::Grid : MeshMode::Tet;
     OUTPUT_FILENAME = OUTPUT_DIR + "/GSD.obj";
-    OUTPUT_DIR = outputDir ? args::get(outputDir) : OUTPUT_DIR;   // 默认当前目录
+    OUTPUT_DIR = outputDir ? args::get(outputDir) : OUTPUT_DIR;
     HEADLESS = headless;
     SHM_OPTIONS.exportData = headless; // always true if in headless mode
     SHM_OPTIONS.meshname = polyscope::guessNiceNameFromPath(meshFilepath);
@@ -447,7 +445,6 @@ int main(int argc, char** argv) {
             std::cout << "Loaded edge dual normal geometry" << std::endl;
             
             float t = targetEdgeLength ? args::get(targetEdgeLength) : 0.04f; // default 0.04
-            
             EdgeDualNormalGeometry resampledGeometry;
             if (resampleEdgeDualNormalGeometry(*edgeGeometry, resampledGeometry, t)) {
                 // Replace the original geometry with the resampled one
@@ -506,7 +503,7 @@ int main(int argc, char** argv) {
                     vertices.push_back({v.x, v.y, v.z});
                 }
                 psCloud = polyscope::registerPointCloud("edge vertices", vertices);
-                psCloud->setPointRadius(0.002, true);  // true 表示相对半径
+                psCloud->setPointRadius(0.002, true);
 
                 // Register edges as a curve network
                 std::vector<glm::vec3> edgeVertices;

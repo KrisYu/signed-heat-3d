@@ -7,6 +7,8 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <algorithm>
+#include <cmath>
 #include "geometrycentral/utilities/vector3.h"
 
 namespace geometrycentral {
@@ -264,6 +266,119 @@ inline bool resampleEdgeDualNormalGeometry(
     return true;
 }
 
+
+
+inline bool snapNormals(EdgeDualNormalGeometry& geometry,
+                        float angleTolerance = 15.0f) {
+    
+    // Get copies of the normal arrays (const methods return const references)
+    std::vector<Vector3> normals1 = geometry.getNormals1();
+    std::vector<Vector3> normals2 = geometry.getNormals2();
+    
+    if (normals1.size() != normals2.size()) {
+        std::cerr << "Error: Normal arrays must have the same size" << std::endl;
+        return false;
+    }
+    
+    if (angleTolerance <= 0.0f || angleTolerance >= 180.0f) {
+        std::cerr << "Error: Angle tolerance must be between 0 and 180 degrees" << std::endl;
+        return false;
+    }
+    
+    // Convert angle tolerance to cosine for efficient comparison
+    float cosAngleTolerance = std::cos(angleTolerance * M_PI / 180.0f);
+    
+    size_t snappedCount = 0;
+    
+    for (size_t i = 0; i < normals1.size(); ++i) {
+        Vector3 n1 = normals1[i];
+        Vector3 n2 = normals2[i];
+        
+        // n1 and n2 are already normalized unit vectors
+        
+        // Calculate dot product (cosine of angle between normals)
+        float dotProduct = dot(n1, n2);
+        
+        // Clamp dot product to [-1, 1] to handle numerical errors
+        dotProduct = std::max(-1.0f, std::min(1.0f, dotProduct));
+        
+        // Check if normals are close (angle is small)
+        // We use abs(dotProduct) to handle both parallel and anti-parallel cases
+        if (std::abs(dotProduct) >= cosAngleTolerance) {
+            // Normals are close, compute average
+            Vector3 averageNormal = normalize((n1 + n2) / 2.0);
+            
+            // Set both normals to the average
+            normals1[i] = averageNormal;
+            normals2[i] = averageNormal;
+            
+            snappedCount++;
+        }
+        // If normals are not close enough, keep them as they are (no action needed)
+    }
+    
+    // Set the modified arrays back to the geometry using setter methods
+    geometry.setNormals1(normals1);
+    geometry.setNormals2(normals2);
+    
+    std::cout << "Normal snapping complete:" << std::endl;
+    std::cout << "- Total edges: " << normals1.size() << std::endl;
+    std::cout << "- Snapped normals: " << snappedCount << std::endl;
+    std::cout << "- Angle tolerance: " << angleTolerance << " degrees" << std::endl;
+    
+    return true;
+}
+
+
+inline Vector3 rotateAroundAxis(const Vector3& v, const Vector3& axis, float theta) {
+    Vector3 a = normalize(axis);
+    float c = cos(theta);
+    float s = sin(theta);
+    return v * c + cross(a, v) * s + a * dot(a, v) * (1 - c);
+}
+
+
+
+
+
+
+inline bool snapAndExpandNormals(EdgeDualNormalGeometry& geometry,
+                                 float angleTolerance = 25.0f,
+                                 float expandAngle = 5.0f) {
+    auto normals1 = geometry.getNormals1();
+    auto normals2 = geometry.getNormals2();
+    if (normals1.size() != normals2.size()) return false;
+
+    float cosTol = cos(angleTolerance * M_PI / 180.0f);
+    float expandRad = expandAngle * M_PI / 180.0f;
+
+    for (size_t i = 0; i < normals1.size(); ++i) {
+        Vector3 n1 = normalize(normals1[i]);
+        Vector3 n2 = normalize(normals2[i]);
+
+        // Calculate dot product (cosine of angle between normals)
+        float dotp = dot(n1, n2);
+        
+        // Clamp dot product to [-1, 1] to handle numerical errors
+        dotp = std::max(-1.0f, std::min(1.0f, dotp));
+        
+
+        if (dotp >= cosTol) { // 角度小于阈值
+            Vector3 axis = cross(n1, n2);
+            if (norm(axis) < 1e-6) continue; // 平行或反平行，跳过
+
+            axis = normalize(axis);
+
+            // 一个转正，一个转负
+            normals1[i] = normalize(rotateAroundAxis(n1, axis, -expandRad));
+            normals2[i] = normalize(rotateAroundAxis(n2, axis,  expandRad));
+        }
+    }
+
+    geometry.setNormals1(normals1);
+    geometry.setNormals2(normals2);
+    return true;
+}
 
 
 } // namespace geometrycentral

@@ -7,6 +7,9 @@
 using namespace geometrycentral;
 using namespace geometrycentral::surface;
 
+// dual normal per edge
+#include "edge_dual_normal_geometry.h"
+
 class SignedHeatGridSolver {
 
   public:
@@ -17,7 +20,8 @@ class SignedHeatGridSolver {
 
     Vector<double> computeDistance(pointcloud::PointPositionNormalGeometry& pointGeom,
                                    const SignedHeat3DOptions& options = SignedHeat3DOptions());
-
+    Vector<double> computeDistance(EdgeDualNormalGeometry& edgeGeom,
+                                   const SignedHeat3DOptions& optionsoptions = SignedHeat3DOptions());
     bool VERBOSE = true;
 
     // Expose parameters for visualizing the grid
@@ -27,7 +31,7 @@ class SignedHeatGridSolver {
   private:
     double shortTime;
     Vector3 cellSizes;
-    std::array<size_t, 3> resolution = {32, 32, 32}; // number of vertices on x/y/z side of grid
+    std::array<size_t, 3> resolution = {64, 64, 64}; // number of vertices on x/y/z side of grid
     Vector3 bboxMin, bboxMax;
 
     SparseMatrix<double> laplaceMat;
@@ -46,4 +50,5 @@ class SignedHeatGridSolver {
     size_t indicesToNodeIndex(const size_t& i, const size_t& j, const size_t& k) const;
     Vector3 indicesToNodePosition(const size_t& i, const size_t& j, const size_t& k) const;
     void exportData(const Vector<double>& phi, const SignedHeat3DOptions& options) const;
+    
 };

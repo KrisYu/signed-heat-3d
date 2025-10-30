@@ -6,6 +6,9 @@
 #include "geometrycentral/surface/surface_mesh.h"
 #include "geometrycentral/surface/vertex_position_geometry.h"
 
+#include "edge_dual_normal_geometry.h"
+
+
 #include <queue>
 
 #include <chrono>
@@ -38,8 +41,10 @@ struct SignedHeat3DOptions {
     LevelSetConstraint levelSetConstraint = LevelSetConstraint::ZeroSet;
     double tCoef = 1.0;
     bool rebuild = true;
-    Vector3 bboxMin = {1., 1., 1.};
+    Vector3 bboxMin = {1., 1., 1.}; 
     Vector3 bboxMax = {-1., -1., -1.};
+//    Vector3 bboxMin = {.5, .5, .5};
+//    Vector3 bboxMax = {-.5, -.5, -.5};
     std::array<size_t, 3> resolution = {0, 0, 0};
     bool useCrouzeixRaviart = true;
     bool fastIntegration = false;
@@ -59,6 +64,8 @@ bool isBoundingBoxValid(const Vector3& bboxMin, const Vector3& bboxMax);
 bool isResolutionValid(const std::array<size_t, 3>& resolution);
 std::pair<Vector3, Vector3> computeBBox(VertexPositionGeometry& geometry);
 std::pair<Vector3, Vector3> computeBBox(pointcloud::PointPositionNormalGeometry& pointGeom);
+std::pair<Vector3, Vector3> computeBBox(EdgeDualNormalGeometry& edgeGeom);
+
 
 Vector<double> AMGCL_solve(const SparseMatrix<double>& LHS, const Vector<double>& RHS, bool verbose = false);
 Vector<double> AMGCL_blockSolve(const SparseMatrix<double>& L, const SparseMatrix<double>& A,
