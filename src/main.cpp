@@ -83,7 +83,7 @@ bool VERBOSE = true;
 bool HEADLESS;
 bool CONTOURED = false;
 
-bool AUTO_EXPORT_ISOSURFACE = false;  // 自动保存
+bool AUTO_EXPORT_ISOSURFACE = true;  // 自动保存
 void contour();
 
 void solve() {
@@ -419,13 +419,14 @@ int main(int argc, char** argv) {
     // Get file extension.
     std::string ext = meshFilepath.substr(meshFilepath.find_last_of(".") + 1);
     pointcloud::PointData<Vector3> pointPositions;
+    pointcloud::PointData<Vector3> pointNormals;
     if (ext == "pc" ) {
         std::vector<Vector3> positions, normals;
         std::tie(positions, normals) = readPointCloud(meshFilepath);
         size_t nPts = positions.size();
         cloud = std::unique_ptr<pointcloud::PointCloud>(new pointcloud::PointCloud(nPts));
         pointPositions = pointcloud::PointData<Vector3>(*cloud);
-        pointcloud::PointData<Vector3> pointNormals = pointcloud::PointData<Vector3>(*cloud);
+        pointNormals = pointcloud::PointData<Vector3>(*cloud);
         for (size_t i = 0; i < nPts; i++) {
             pointPositions[i] = positions[i];
             pointNormals[i] = normals[i];

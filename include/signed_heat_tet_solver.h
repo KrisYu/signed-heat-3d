@@ -155,4 +155,5 @@ private:
     void exportDataAndMesh(const Vector<double>& phi, const SignedHeat3DOptions& options) const;
     void visualizeWithProblematicEdges(const std::vector<EdgeRefinementInfo>& edgesToRefine);
 
+    Vector<double> dualLaplacianMassMatrix() const;
 };

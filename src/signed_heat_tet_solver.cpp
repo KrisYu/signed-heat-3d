@@ -398,20 +398,28 @@ Vector<double> SignedHeatTetSolver::integrateVectorField(pointcloud::PointPositi
             break;
         }
         case (LevelSetConstraint::ZeroSet): {
-            std::cout << "break point " << std::endl;
-            Vector<double> div = vertexDivergence(Yt);
+            const bool BILAPLACE = false;
+            std::cout << "solve equation begins here with BILAPLACE: " << BILAPLACE << std::endl;
             size_t P = pointGeom.cloud.nPoints();
+            Vector<double> div = vertexDivergence(Yt);        
+            Vector<double> invMass;
+            if( BILAPLACE ) {
+                // It's hard to notice the difference the mass mastrix makes.
+                invMass = dualLaplacianMassMatrix().cwiseInverse();
+                div = laplaceMat * invMass.asDiagonal() * div;
+                // div = laplaceMat * div;
+            }
             Vector<bool> setAMembership = Vector<bool>::Ones(nVertices);
             for (size_t i = 0; i < P; i++) setAMembership[i] = false;
             int nB = nVertices - setAMembership.cast<int>().sum();
             Vector<double> bcVals = Vector<double>::Zero(nB);
-            BlockDecompositionResult<double> decomp = blockDecomposeSquare(laplaceMat, setAMembership, true);
+            // BlockDecompositionResult<double> decomp = blockDecomposeSquare(BILAPLACE ? (laplaceMat * laplaceMat) : laplaceMat, setAMembership, true);
+            BlockDecompositionResult<double> decomp = blockDecomposeSquare(BILAPLACE ? (laplaceMat * invMass.asDiagonal() * laplaceMat) : laplaceMat, setAMembership, true);
             Vector<double> rhsValsA, rhsValsB;
             decomposeVector(decomp, div, rhsValsA, rhsValsB);
             Vector<double> combinedRHS = rhsValsA;
             // clang-format off
             #ifndef SHM_NO_AMGCL
-//            #if 0
             Vector<double> Aresult = AMGCL_solve(decomp.AA, combinedRHS, VERBOSE = true);
             #else
             Vector<double> Aresult = solvePositiveDefinite(decomp.AA, combinedRHS);
@@ -824,6 +832,43 @@ SparseMatrix<double> SignedHeatTetSolver::dualLaplacian() const {
     }
     L.setFromTriplets(triplets.begin(), triplets.end());
     return L;
+}
+
+Vector<double> SignedHeatTetSolver::dualLaplacianMassMatrix() const {
+
+    Vector<double> mass = Vector<double>::Zero(nVertices);
+
+    const int turn[4][4]{{-1, 2, 3, 1}, {3, -1, 0, 2}, {1, 3, -1, 0}, {2, 0, 1, -1}};
+
+    auto getTet = [&](const int i, Eigen::Matrix<double, 4, 3>& t) {
+        for (int k = 0; k < 4; ++k) {
+            t.row(k) = vertices.row(tets(i, k));
+        }
+    };
+
+    std::vector<Eigen::Triplet<double>> triplets;
+    Eigen::Vector3d cc;
+    Eigen::Matrix<double, 4, 3> t;
+
+    for (size_t k = 0; k < nTets; k++) {
+        // Compute the circumcenter of the tet.
+        getTet(k, t);
+        tetCircumcenter(t, cc);
+        for (int i = 0; i < 4; i++) {
+            for (int j = 0; j < 4; j++) {
+                if (i != j) {
+                    Eigen::Vector3d cf;
+                    faceCircumcenter(t.row(i), t.row(j), t.row(turn[i][j]), cf);
+
+                    const Eigen::Vector3d ce = 0.5 * (t.row(i) + t.row(j));
+
+                    const double vol = tetVolume(t.row(i), ce, cf, cc);
+                    mass(tets(k,i)) += vol;
+                }
+            }
+        }
+    }
+    return mass;
 }
 
 Vector<double> SignedHeatTetSolver::vertexDivergence(const Eigen::MatrixXd& X) const {
@@ -1636,7 +1681,7 @@ Vector<double> SignedHeatTetSolver::computeDistance(EdgeDualNormalGeometry& edge
         std::cout << std::endl;
         std::cout << "Final phi size: " << phi.size() << ", expected vertices: " << vertices.rows() << std::endl;
     }
-    exportDataAndMesh(phi, options);
+//    exportDataAndMesh(phi, options);
     return phi;
 }
 
@@ -1781,9 +1826,8 @@ void SignedHeatTetSolver::tetmeshEdgeGeo(EdgeDualNormalGeometry& edgeGeom,
     std::string EDGE_TET_PREFIX = "pq2.0Yfennna"; // q2.0 很宽松，不会破坏边
 
     double meanEdgeLength = calculateAverageEdgeLength(edgeGeom);
-//    double targetArea = meanEdgeLength * meanEdgeLength;
+//    double targetArea = meanEdgeLength * meanEdgeLength / 30;
     double targetArea = meanEdgeLength * meanEdgeLength * meanEdgeLength;
-
     std::string tetFlags = EDGE_TET_PREFIX + std::to_string(targetArea);
 
     try {
