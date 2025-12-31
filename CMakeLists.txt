@@ -27,11 +27,14 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # signed-heat-3d is a *tool*, not a system library.
 # We only want to install the final executable, not its deps.
 # ------------------------------------------------------------
+set(CMAKE_SKIP_INSTALL_RULES ON CACHE BOOL "" FORCE)
+set(CMAKE_SKIP_INSTALL_ALL_DEPENDENCY ON CACHE BOOL "" FORCE)
 set(POLYSCOPE_INSTALL OFF CACHE BOOL "" FORCE)
 set(GEOMETRY_CENTRAL_INSTALL OFF CACHE BOOL "" FORCE)
 set(TETGEN_INSTALL OFF CACHE BOOL "" FORCE)
 set(AMGCL_INSTALL OFF CACHE BOOL "" FORCE)
 set(LIBIGL_INSTALL OFF CACHE BOOL "" FORCE)
+
 
 # ------------------------------------------------------------
 # Compiler flags (keep your original spirit, but simplified)
