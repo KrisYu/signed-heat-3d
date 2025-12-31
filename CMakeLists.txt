@@ -1,96 +1,80 @@
-cmake_minimum_required(VERSION 3.12.0)
+cmake_minimum_required(VERSION 3.12)
 
-project(signed-heat-3d)
+# ------------------------------------------------------------
+# Project
+# ------------------------------------------------------------
+project(signed-heat-3d LANGUAGES CXX)
 
-### Configure output locations
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
-set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake/modules)  
-
-# Print the build type
+# ------------------------------------------------------------
+# Build type
+# ------------------------------------------------------------
 if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build, options are: Debug Release" FORCE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING
+      "Choose the type of build: Debug or Release" FORCE)
 endif()
-message(STATUS "cmake build type: ${CMAKE_BUILD_TYPE}")
+message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
-### Configure the compiler
-# This is a basic, decent setup that should do something sane on most compilers
+# ------------------------------------------------------------
+# C++ standard
+# ------------------------------------------------------------
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
-if ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
+# ------------------------------------------------------------
+# IMPORTANT: Disable installation of third-party dependencies
+#
+# signed-heat-3d is a *tool*, not a system library.
+# We only want to install the final executable, not its deps.
+# ------------------------------------------------------------
+set(POLYSCOPE_INSTALL OFF CACHE BOOL "" FORCE)
+set(GEOMETRY_CENTRAL_INSTALL OFF CACHE BOOL "" FORCE)
+set(TETGEN_INSTALL OFF CACHE BOOL "" FORCE)
+set(AMGCL_INSTALL OFF CACHE BOOL "" FORCE)
+set(LIBIGL_INSTALL OFF CACHE BOOL "" FORCE)
 
-  # using Clang (linux or apple) or GCC
-  message("Using clang/gcc compiler flags")
-  SET(CMAKE_CXX_STANDARD 20)
-  SET(BASE_CXX_FLAGS "-std=c++20 -Wall -Wextra") 
-  SET(DISABLED_WARNINGS " -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function -Wno-deprecated-declarations -Wno-missing-braces -Wno-unused-label -Wno-register -Wno-sign-compare -Wno-unknown-pragmas -Wno-unused-result -Wno-narrowing -Wno-unused-but-set-variable -Wno-unused-lambda-capture -Wno-unused-local-typedefs")
-  SET(TRACE_INCLUDES " -H -Wno-error=unused-command-line-argument")
+# ------------------------------------------------------------
+# Compiler flags (keep your original spirit, but simplified)
+# ------------------------------------------------------------
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  message(STATUS "Using clang/gcc compiler flags")
+  add_compile_options(
+    -Wall -Wextra
+    -Wno-unused-parameter
+    -Wno-unused-variable
+    -Wno-unused-function
+    -Wno-deprecated-declarations
+    -Wno-narrowing 
+  )
 
-  if ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
-    message("Setting clang-specific options")
-    SET(BASE_CXX_FLAGS "${BASE_CXX_FLAGS} -ferror-limit=3 -Wfatal-errors -fcolor-diagnostics")
-    SET(CMAKE_CXX_FLAGS_DEBUG "-g3 -fno-limit-debug-info")    
-#    SET(CMAKE_CXX_FLAGS_DEBUG          "-g3 -fsanitize=address -fno-limit-debug-info")
-  elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
-    message("Setting gcc-specific options")
-    SET(BASE_CXX_FLAGS "${BASE_CXX_FLAGS} -fmax-errors=5")
-    SET(CMAKE_CXX_FLAGS_DEBUG          "-g3")
-    SET(DISABLED_WARNINGS "${DISABLED_WARNINGS} -Wno-maybe-uninitialized -Wno-format-zero-length -Wno-unused-but-set-parameter -Wno-unused-but-set-variable")
-  endif()
-  
-  SET(CMAKE_CXX_FLAGS "${BASE_CXX_FLAGS} ${DISABLED_WARNINGS} -std=c++20")
-
-  include(CheckCXXCompilerFlag)
-  unset(COMPILER_SUPPORTS_MARCH_NATIVE CACHE)
-  CHECK_CXX_COMPILER_FLAG(-march=native COMPILER_SUPPORTS_MARCH_NATIVE)
-  if(COMPILER_SUPPORTS_MARCH_NATIVE)
-    SET(CMAKE_CXX_FLAGS_RELEASE        "-O3 -march=native -DNDEBUG -std=c++20")
+  if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    add_compile_options(-O3 -DNDEBUG)
   else()
-    SET(CMAKE_CXX_FLAGS_RELEASE        "-O3 -mcpu=apple-m1 -DNDEBUG -std=c++20") # Apple M1
+    add_compile_options(-g)
   endif()
 
-elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
-  # using Visual Studio C++
-  message("Using Visual Studio compiler flags")
-  set(BASE_CXX_FLAGS "${BASE_CXX_FLAGS} /W4")
-  set(BASE_CXX_FLAGS "${BASE_CXX_FLAGS} /MP") # parallel build
-  SET(DISABLED_WARNINGS "${DISABLED_WARNINGS} /wd\"4267\"")  # ignore conversion to smaller type (fires more aggressively than the gcc version, which is annoying)
-  SET(DISABLED_WARNINGS "${DISABLED_WARNINGS} /wd\"4244\"")  # ignore conversion to smaller type (fires more aggressively than the gcc version, which is annoying)
-  SET(DISABLED_WARNINGS "${DISABLED_WARNINGS} /wd\"4305\"")  # ignore truncation on initialization
-  SET(CMAKE_CXX_FLAGS "${BASE_CXX_FLAGS} ${DISABLED_WARNINGS}")
-  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MD")
-  set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MDd")
-
-  add_definitions(/D "_CRT_SECURE_NO_WARNINGS")
-  add_definitions(-DNOMINMAX)
-  add_definitions(-D_USE_MATH_DEFINES)
-else()
-  # unrecognized
-  message( FATAL_ERROR "Unrecognized compiler [${CMAKE_CXX_COMPILER_ID}]" )
+elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+  message(STATUS "Using MSVC compiler flags")
+  add_compile_options(/W4)
+  add_definitions(-DNOMINMAX -D_USE_MATH_DEFINES)
 endif()
 
-
-# added by Xue
+# ------------------------------------------------------------
+# Global compile definitions
+# ------------------------------------------------------------
 add_compile_definitions(NGC_SAFETY_CHECKS)
 
-# == Deps
+# ------------------------------------------------------------
+# Third-party dependencies (build-only)
+# ------------------------------------------------------------
 add_subdirectory(deps/geometry-central)
 add_subdirectory(deps/polyscope)
 add_subdirectory(deps/tetgen)
 add_subdirectory(deps/amgcl)
 
-set(SRCS
-  src/signed_heat_tet_solver.cpp
-  src/signed_heat_grid_solver.cpp
-  src/signed_heat_3d.cpp
-  src/main.cpp
-  deps/CDT/src/giftWrap.cpp     # 添加这些
-  deps/CDT/src/PLC.cpp          # CDT 源文件
-  deps/CDT/src/delaunay.cpp     # （排除 main.cpp）
-)
-
-# == Build our project stuff
-
+# ------------------------------------------------------------
+# Sources
+# ------------------------------------------------------------
 set(SRCS
   src/signed_heat_tet_solver.cpp
   src/signed_heat_grid_solver.cpp
@@ -98,24 +82,42 @@ set(SRCS
   src/main.cpp
 )
 
-option(SHM_NO_AMGCL "Do not use AMGCL" OFF)
-if (SHM_NO_AMGCL)
-  add_definitions(-DSHM_NO_AMGCL=)
-  message(STATUS "Not using AMGCL")
-else()
-  add_definitions(-USHM_NO_AMGCL)
-  message(STATUS "Using AMGCL")
-endif()
 
-add_executable(main "${SRCS}")
-target_include_directories(main PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include/")
-target_include_directories(main PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/deps/tetgen/")
-target_include_directories(main PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/deps/CDT/src")
-target_include_directories(main PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/deps/CDT/include")
+# ------------------------------------------------------------
+# Executable (IMPORTANT: do NOT call it "main")
+# ------------------------------------------------------------
+add_executable(signed_heat_3d
+  ${SRCS}
+)
 
-# add the args.hxx project which we use for command line args
-target_include_directories(main PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/deps/polyscope/deps/args")
-target_link_libraries(main geometry-central polyscope tetgen amgcl::amgcl)
+# ------------------------------------------------------------
+# Include directories
+# ------------------------------------------------------------
+target_include_directories(signed_heat_3d PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/deps/tetgen
+  ${CMAKE_CURRENT_SOURCE_DIR}/deps/polyscope/deps/args
+)
 
-# Add libIGL in header-only mode.
-target_include_directories(main PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/deps/libigl/include")
+# libigl is header-only here
+target_include_directories(signed_heat_3d PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/deps/libigl/include
+)
+
+# ------------------------------------------------------------
+# Link libraries
+# ------------------------------------------------------------
+target_link_libraries(signed_heat_3d
+  geometry-central
+  polyscope
+  tetgen
+  amgcl::amgcl
+)
+
+# ------------------------------------------------------------
+# Install rule
+# Install directly to <prefix>/signed_heat_3d
+# ------------------------------------------------------------
+install(TARGETS signed_heat_3d
+  RUNTIME DESTINATION .
+)
